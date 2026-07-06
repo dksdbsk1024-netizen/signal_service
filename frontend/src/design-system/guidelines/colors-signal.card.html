@@ -1,0 +1,28 @@
+<!-- @dsCard group="Colors" viewport="700x160" name="Signal Colors" subtitle="매수=빨강 · 매도=파랑 · 중립=회색 (국내 시장 관습)" -->
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+body{margin:0;background:var(--bg-base);padding:20px;font-family:var(--font-body);}
+.row{display:flex;gap:12px;}
+.chip{flex:1;border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:6px;}
+.label{font-size:12px;color:var(--text-tertiary);}
+.val{font-size:13px;font-weight:700;font-family:var(--font-numeric);}
+</style></head>
+<body data-theme="dark">
+<div class="row">
+  <div class="chip" style="background:var(--signal-buy-bg);border:1px solid var(--signal-buy-border);">
+    <div class="val" style="color:var(--signal-buy-strong);">적극매수</div>
+    <div class="val" style="color:var(--signal-buy);">매수 / 상승</div>
+    <div class="label">--signal-buy #ff5c5c</div>
+  </div>
+  <div class="chip" style="background:var(--signal-neutral-bg);border:1px solid var(--signal-neutral-border);">
+    <div class="val" style="color:var(--signal-neutral);">중립</div>
+    <div class="label" style="margin-top:auto;">--signal-neutral #8b98a5</div>
+  </div>
+  <div class="chip" style="background:var(--signal-sell-bg);border:1px solid var(--signal-sell-border);">
+    <div class="val" style="color:var(--signal-sell-strong);">적극매도</div>
+    <div class="val" style="color:var(--signal-sell);">매도 / 하락</div>
+    <div class="label">--signal-sell #4d8dff</div>
+  </div>
+</div>
+</body></html>

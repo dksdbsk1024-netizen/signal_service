@@ -1,0 +1,121 @@
+/* ==========================================================================
+   COLORS — Terminal Slate
+   국내 시장 관습: 매수/상승 = 빨강, 매도/하락 = 파랑, 중립 = 회색
+   Dark mode is primary (long trading sessions); light tokens provided too.
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  /* ---- base neutrals (dark) ---- */
+  --n-0: #05070a;   /* deepest bg, rarely used */
+  --n-1: #0a0e14;   /* page background */
+  --n-2: #10151c;   /* base surface */
+  --n-3: #141a22;   /* card surface */
+  --n-4: #191f28;   /* raised surface / hover */
+  --n-5: #1c232d;   /* inset track (bars, inputs) */
+  --n-6: #232b36;   /* border */
+  --n-7: #2c3542;   /* strong border / divider */
+  --n-8: #5b6672;   /* muted text */
+  --n-9: #8b98a5;   /* secondary text */
+  --n-10: #c9d1d9;  /* primary text (slightly soft, low eye strain) */
+  --n-11: #e6edf3;  /* emphasis text / headings */
+  --n-12: #ffffff;
+
+  /* ---- semantic surfaces ---- */
+  --bg-base: var(--n-1);
+  --bg-surface: var(--n-3);
+  --bg-surface-raised: var(--n-4);
+  --bg-inset: var(--n-5);
+  --border-default: var(--n-6);
+  --border-strong: var(--n-7);
+
+  /* ---- semantic text ---- */
+  --text-primary: var(--n-11);
+  --text-body: var(--n-10);
+  --text-secondary: var(--n-9);
+  --text-tertiary: var(--n-8);
+  --text-on-signal: #0a0e14;
+
+  /* ---- signal colors (fixed direction, KR convention) ---- */
+  --signal-buy: #ff5c5c;          /* 매수 */
+  --signal-buy-strong: #ff3b3b;   /* 적극매수 */
+  --signal-buy-bg: rgba(255, 92, 92, 0.14);
+  --signal-buy-border: rgba(255, 92, 92, 0.32);
+
+  --signal-sell: #4d8dff;         /* 매도 */
+  --signal-sell-strong: #2f6fe0;  /* 적극매도 */
+  --signal-sell-bg: rgba(77, 141, 255, 0.14);
+  --signal-sell-border: rgba(77, 141, 255, 0.32);
+
+  --signal-neutral: #8b98a5;      /* 중립 */
+  --signal-neutral-bg: rgba(139, 152, 165, 0.12);
+  --signal-neutral-border: rgba(139, 152, 165, 0.28);
+
+  /* ---- accent (non-directional UI highlight — deliberately far from red/blue) ---- */
+  --accent: #e8b339;
+  --accent-bg: rgba(232, 179, 57, 0.12);
+  --accent-strong: #f0c559;
+
+  /* ---- status ---- */
+  --status-live: #3ecf6a;   /* 장중 */
+  --status-closed: #5b6672; /* 장마감 */
+  --status-after: #e8b339;  /* 시간외 */
+
+  /* ---- focus / overlay ---- */
+  --focus-ring: rgba(232, 179, 57, 0.55);
+  --overlay-scrim: rgba(5, 7, 10, 0.72);
+}
+
+[data-theme="light"] {
+  --n-0: #ffffff;
+  --n-1: #f5f6f8;
+  --n-2: #eef0f3;
+  --n-3: #ffffff;
+  --n-4: #f7f8fa;
+  --n-5: #edeff2;
+  --n-6: #dde1e6;
+  --n-7: #c7cdd5;
+  --n-8: #8b95a1;
+  --n-9: #5b6672;
+  --n-10: #2a323c;
+  --n-11: #12161c;
+  --n-12: #000000;
+
+  --bg-base: var(--n-1);
+  --bg-surface: var(--n-3);
+  --bg-surface-raised: var(--n-4);
+  --bg-inset: var(--n-5);
+  --border-default: var(--n-6);
+  --border-strong: var(--n-7);
+
+  --text-primary: var(--n-11);
+  --text-body: var(--n-10);
+  --text-secondary: var(--n-9);
+  --text-tertiary: var(--n-8);
+  --text-on-signal: #ffffff;
+
+  --signal-buy: #e0393f;
+  --signal-buy-strong: #c81e24;
+  --signal-buy-bg: rgba(224, 57, 63, 0.10);
+  --signal-buy-border: rgba(224, 57, 63, 0.28);
+
+  --signal-sell: #2f6fe0;
+  --signal-sell-strong: #1c54bd;
+  --signal-sell-bg: rgba(47, 111, 224, 0.10);
+  --signal-sell-border: rgba(47, 111, 224, 0.28);
+
+  --signal-neutral: #6b7684;
+  --signal-neutral-bg: rgba(107, 118, 132, 0.10);
+  --signal-neutral-border: rgba(107, 118, 132, 0.24);
+
+  --accent: #ad7f13;
+  --accent-bg: rgba(173, 127, 19, 0.10);
+  --accent-strong: #8f6a10;
+
+  --status-live: #1f9d51;
+  --status-closed: #8b95a1;
+  --status-after: #ad7f13;
+
+  --focus-ring: rgba(173, 127, 19, 0.45);
+  --overlay-scrim: rgba(20, 24, 30, 0.4);
+}

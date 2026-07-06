@@ -1,0 +1,98 @@
+<!-- @dsCard group="Screener Tab" viewport="1440x900" name="탭5 — 관심종목/스크리너" subtitle="지수 스트립 + 랭킹 테이블(매수/매도 체결비율) + 실시간 랭킹 패널" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>단기매매 신호 — 관심종목/스크리너</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="../_shared/SettingsPanel.jsx"></script>
+<script type="text/babel" src="Tab5Screener.jsx"></script>
+<script type="text/babel">
+function genCandles(base) {
+  const out = [];
+  let price = base;
+  for (let i = 0; i < 12; i++) {
+    const o = price;
+    const drift = (Math.sin(i * 1.1) + (i % 4 === 0 ? 0.5 : -0.15)) * base * 0.003;
+    const c = Math.round(o + drift);
+    const h = Math.round(Math.max(o, c) + base * 0.0018);
+    const l = Math.round(Math.min(o, c) - base * 0.0018);
+    const v = Math.round(40000 + Math.random() * 80000);
+    out.push({ t: `${i}`, o, h, l, c, v });
+    price = c;
+  }
+  return out;
+}
+
+function series(base, n, vol) {
+  const out = [base];
+  for (let i = 1; i < n; i++) out.push(out[i - 1] + (Math.random() - 0.45) * vol);
+  return out;
+}
+
+const MARKET = [
+  { label: "코스피", value: "2,847.31", changePct: 1.12, series: series(2800, 20, 8) },
+  { label: "코스닥", value: "853.55", changePct: -1.71, series: series(870, 20, 4) },
+  { label: "원/달러", value: "1,352.40", changePct: -0.28, series: series(1355, 20, 2) },
+  { label: "거래대금", value: "18.4조", changePct: 0.6, series: series(17, 20, 1) },
+];
+
+const ROWS = [
+  { ticker: "000660", name: "SK하이닉스", price: 244100, changePct: 0.65, score: 71, buyPct: 67, volume: "1,234억" },
+  { ticker: "005930", name: "삼성전자", price: 320000, changePct: 3.39, score: 58, buyPct: 61, volume: "905억" },
+  { ticker: "006400", name: "삼성SDI", price: 214500, changePct: 6.72, score: 64, buyPct: 58, volume: "298억" },
+  { ticker: "010130", name: "고려아연", price: 745000, changePct: -0.19, score: -8, buyPct: 48, volume: "244억" },
+  { ticker: "096770", name: "SK이노베이션", price: 118900, changePct: 11.22, score: 82, buyPct: 71, volume: "199억" },
+  { ticker: "247540", name: "에코프로비엠", price: 165600, changePct: 4.21, score: 39, buyPct: 59, volume: "211억" },
+  { ticker: "066570", name: "LG전자", price: 94400, changePct: -2.26, score: -34, buyPct: 38, volume: "150억" },
+  { ticker: "003670", name: "포스코퓨처엠", price: 231400, changePct: -3.05, score: -52, buyPct: 31, volume: "132억" },
+  { ticker: "035420", name: "NAVER", price: 189500, changePct: 0.42, score: 6, buyPct: 51, volume: "121억" },
+  { ticker: "051910", name: "LG화학", price: 302500, changePct: 1.85, score: 24, buyPct: 55, volume: "98억" },
+];
+
+const CONTRIB_BY_TICKER = {
+  "000660": [{ name: "수급", score: 28 }, { name: "모멘텀", score: 18 }, { name: "추세", score: 12 }, { name: "변동성", score: -5 }],
+  "005930": [{ name: "모멘텀", score: 22 }, { name: "수급", score: 19 }, { name: "추세", score: 10 }, { name: "거래량", score: 4 }],
+  "006400": [{ name: "수급", score: 24 }, { name: "추세", score: 15 }, { name: "모멘텀", score: 11 }, { name: "변동성", score: -8 }],
+  "010130": [{ name: "변동성", score: -12 }, { name: "모멘텀", score: -6 }, { name: "수급", score: 3 }, { name: "추세", score: -2 }],
+  "096770": [{ name: "거래량", score: 31 }, { name: "수급", score: 27 }, { name: "모멘텀", score: 20 }, { name: "추세", score: 9 }],
+  "247540": [{ name: "모멘텀", score: 16 }, { name: "수급", score: 12 }, { name: "추세", score: 8 }, { name: "변동성", score: -6 }],
+  "066570": [{ name: "수급", score: -20 }, { name: "추세", score: -14 }, { name: "모멘텀", score: -9 }, { name: "거래량", score: 2 }],
+  "003670": [{ name: "수급", score: -28 }, { name: "모멘텀", score: -18 }, { name: "추세", score: -15 }, { name: "변동성", score: -6 }],
+  "035420": [{ name: "추세", score: 5 }, { name: "수급", score: 3 }, { name: "모멘텀", score: -2 }, { name: "변동성", score: 1 }],
+  "051910": [{ name: "모멘텀", score: 13 }, { name: "수급", score: 9 }, { name: "추세", score: 6 }, { name: "거래량", score: -3 }],
+};
+
+const STOCK_DETAILS = Object.fromEntries(
+  ROWS.map((r) => [
+    r.ticker,
+    {
+      name: r.name,
+      price: r.price,
+      changePct: r.changePct,
+      score: r.score,
+      candles: genCandles(r.price),
+      contributions: CONTRIB_BY_TICKER[r.ticker],
+    },
+  ])
+);
+
+function App() {
+  return <window.Tab5Screener market={MARKET} watchlist={ROWS.map((r) => ({ name: r.name, ticker: r.ticker }))} rows={ROWS} stockDetails={STOCK_DETAILS} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

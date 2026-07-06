@@ -1,0 +1,121 @@
+<!-- @dsCard group="Flow Tab" viewport="1440x900" name="탭3 — 수급" subtitle="외국인·기관 순매수 + 프로그램매매 + 체결강도 + 호가창(Level2) + 거래원, 고밀도" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>단기매매 신호 — 수급</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="../_shared/SettingsPanel.jsx"></script>
+<script type="text/babel" src="Tab3Flow.jsx"></script>
+<script type="text/babel">
+function genNetBuy(days, foreignAmp, instAmp) {
+  const dates = [];
+  const foreign = [];
+  const institution = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(2026, 5, 1 + i);
+    dates.push(`${d.getMonth() + 1}/${d.getDate()}`);
+    const fBias = Math.sin(i * 0.6) * 0.6 + (i % 6 === 0 ? 0.8 : 0);
+    const iBias = Math.cos(i * 0.5) * 0.5 - (i % 7 === 0 ? 0.6 : 0);
+    foreign.push(Math.round((fBias + (Math.random() - 0.5) * 0.6) * foreignAmp));
+    institution.push(Math.round((iBias + (Math.random() - 0.5) * 0.6) * instAmp));
+  }
+  return { dates, foreign, institution };
+}
+
+function genProgram(points, amp) {
+  const net = [];
+  let acc = 0;
+  for (let i = 0; i < points; i++) {
+    const v = Math.round((Math.sin(i * 0.4) * 0.5 + (Math.random() - 0.5)) * amp);
+    net.push(v);
+  }
+  return { net };
+}
+
+function genOrderBook(base, tick, qtyAmp) {
+  const asks = [];
+  const bids = [];
+  for (let i = 1; i <= 10; i++) {
+    asks.push({ price: base + tick * i, qty: Math.round(qtyAmp * (0.3 + Math.random()) * (1 - i * 0.04)) });
+    bids.push({ price: base - tick * i, qty: Math.round(qtyAmp * (0.3 + Math.random()) * (1 - i * 0.04)) });
+  }
+  return { asks, bids };
+}
+
+function genBrokers(names, buyAmp) {
+  return names.map((name) => {
+    const buy = Math.round(buyAmp * (0.3 + Math.random()));
+    const sell = Math.round(buyAmp * (0.3 + Math.random()));
+    return { name, buy, sell, net: buy - sell };
+  });
+}
+
+const BROKER_NAMES = ["미래에셋", "키움증권", "NH투자", "삼성증권", "한국투자", "메릴린치", "모건스탠리", "골드만삭스"];
+
+const STOCKS = {
+  "005930": {
+    header: { name: "삼성전자", ticker: "005930", price: 71300, changePct: 1.8, changeAmt: 1250, volume: "12.4M", marketCap: "425.7조", marketStatus: "open" },
+    flow: {
+      netBuy: genNetBuy(20, 320, 210),
+      program: genProgram(24, 180),
+      strength: 132.4,
+      orderBook: genOrderBook(71300, 100, 42000),
+      brokers: genBrokers(BROKER_NAMES, 8500000000),
+    },
+  },
+  "000660": {
+    header: { name: "SK하이닉스", ticker: "000660", price: 218500, changePct: -2.6, changeAmt: -5800, volume: "3.2M", marketCap: "159.1조", marketStatus: "open" },
+    flow: {
+      netBuy: genNetBuy(20, 260, 340),
+      program: genProgram(24, 140),
+      strength: 78.6,
+      orderBook: genOrderBook(218500, 500, 9000),
+      brokers: genBrokers(BROKER_NAMES, 6200000000),
+    },
+  },
+  "373220": {
+    header: { name: "LG에너지솔루션", ticker: "373220", price: 412000, changePct: 0.1, changeAmt: 500, volume: "1.1M", marketCap: "96.4조", marketStatus: "after" },
+    flow: {
+      netBuy: genNetBuy(20, 90, 60),
+      program: genProgram(24, 40),
+      strength: 101.2,
+      orderBook: genOrderBook(412000, 1000, 2200),
+      brokers: genBrokers(BROKER_NAMES, 1800000000),
+    },
+  },
+};
+
+const SUGGESTIONS = [
+  { name: "삼성전자", ticker: "005930" },
+  { name: "SK하이닉스", ticker: "000660" },
+  { name: "LG에너지솔루션", ticker: "373220" },
+];
+
+function App() {
+  const [ticker, setTicker] = React.useState("005930");
+  const stock = STOCKS[ticker];
+  return (
+    <window.Tab3Flow
+      stock={stock}
+      suggestions={SUGGESTIONS}
+      onSelectStock={(s) => setTicker(s.ticker)}
+    />
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

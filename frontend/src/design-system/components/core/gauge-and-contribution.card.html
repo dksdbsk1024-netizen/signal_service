@@ -1,0 +1,40 @@
+<!-- @dsCard group="Components" viewport="700x520" name="Direction Gauge & Contribution Bar" subtitle="방향성 게이지 5단계 · 지표 기여도 막대" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--bg-base);padding:20px;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { DirectionGauge, ContributionBar } = window.Ds_a0b250;
+function Demo() {
+  return (
+    <div data-theme="dark" style={{display:"flex", flexDirection:"column", gap:20}}>
+      <div style={{display:"flex", gap:24, alignItems:"flex-start", flexWrap:"wrap"}}>
+        <DirectionGauge score={62} size="lg" subtitle="09:32 갱신" />
+        <DirectionGauge score={-38} size="md" />
+        <DirectionGauge score={4} size="sm" />
+      </div>
+      <div style={{width:360, background:"var(--bg-surface)", border:"1px solid var(--border-default)", borderRadius:"var(--radius-md)", padding:16}}>
+        <ContributionBar items={[
+          {name:"수급", score:18, weight:30},
+          {name:"모멘텀", score:11, weight:25},
+          {name:"추세", score:6, weight:20},
+          {name:"변동성", score:-9, weight:15},
+          {name:"거래량", score:-3, weight:10},
+        ]} />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!-- @dsCard group="Technical Tab" viewport="1440x900" name="탭2 — 기술적 분석" subtitle="타임프레임 토글 + 캔들/오버레이 + 오실레이터 + 지표 테이블, 고밀도" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>단기매매 신호 — 기술적 분석</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="../_shared/SettingsPanel.jsx"></script>
+<script type="text/babel" src="Tab2Technical.jsx"></script>
+<script type="text/babel">
+function genCandles(base, count, volAmp) {
+  const out = [];
+  let price = base;
+  for (let i = 0; i < count; i++) {
+    const o = price;
+    const drift = (Math.sin(i * 0.9) + (i % 5 === 0 ? 0.7 : -0.15)) * base * 0.0018;
+    const noise = (Math.random() - 0.5) * base * 0.001;
+    const c = Math.round(o + drift + noise);
+    const h = Math.round(Math.max(o, c) + base * 0.0012);
+    const l = Math.round(Math.min(o, c) - base * 0.0012);
+    const v = Math.round(volAmp * (0.5 + Math.random()));
+    out.push({ t: String(i), o, h, l, c, v });
+    price = c;
+  }
+  return out;
+}
+
+const STOCKS = {
+  "005930": {
+    header: { name: "삼성전자", ticker: "005930", price: 71300, changePct: 1.8, changeAmt: 1250, volume: "12.4M", marketCap: "425.7조", marketStatus: "open" },
+    candlesByTimeframe: {
+      "1m": genCandles(71000, 60, 40000),
+      "5m": genCandles(70600, 48, 90000),
+      "1d": genCandles(68200, 30, 400000),
+      "1w": genCandles(60500, 52, 900000),
+      "1mo": genCandles(55000, 36, 2500000),
+      "1y": genCandles(42000, 10, 8000000),
+    },
+  },
+  "000660": {
+    header: { name: "SK하이닉스", ticker: "000660", price: 218500, changePct: -2.6, changeAmt: -5800, volume: "3.2M", marketCap: "159.1조", marketStatus: "open" },
+    candlesByTimeframe: {
+      "1m": genCandles(219500, 60, 20000),
+      "5m": genCandles(222000, 48, 45000),
+      "1d": genCandles(230000, 30, 180000),
+      "1w": genCandles(205000, 52, 400000),
+      "1mo": genCandles(180000, 36, 1100000),
+      "1y": genCandles(140000, 10, 3600000),
+    },
+  },
+  "373220": {
+    header: { name: "LG에너지솔루션", ticker: "373220", price: 412000, changePct: 0.1, changeAmt: 500, volume: "1.1M", marketCap: "96.4조", marketStatus: "after" },
+    candlesByTimeframe: {
+      "1m": genCandles(411500, 60, 8000),
+      "5m": genCandles(410800, 48, 18000),
+      "1d": genCandles(408000, 30, 70000),
+      "1w": genCandles(390000, 52, 150000),
+      "1mo": genCandles(350000, 36, 420000),
+      "1y": genCandles(300000, 10, 1200000),
+    },
+  },
+};
+
+const SUGGESTIONS = [
+  { name: "삼성전자", ticker: "005930" },
+  { name: "SK하이닉스", ticker: "000660" },
+  { name: "LG에너지솔루션", ticker: "373220" },
+];
+
+function App() {
+  const [ticker, setTicker] = React.useState("005930");
+  const stock = STOCKS[ticker];
+  return (
+    <window.Tab2Technical
+      stock={stock}
+      suggestions={SUGGESTIONS}
+      onSelectStock={(s) => setTicker(s.ticker)}
+    />
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

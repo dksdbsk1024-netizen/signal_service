@@ -1,0 +1,205 @@
+<!-- @dsCard group="Exploration" viewport="1600x900" name="와이어프레임 3안 — 정보구조" subtitle="탭 구조를 다르게 짜는 3가지 전체 레이아웃 방향 (저충실도 스케치)" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="design_doc_mode" content="canvas">
+<title>와이어프레임 3안 — 정보구조 탐색</title>
+<link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #ebebe8;
+    font-family: 'Gaegu', 'Noto Sans KR', sans-serif;
+    color: #333;
+  }
+  .col-title {
+    position: absolute;
+    font-size: 30px;
+    font-weight: 700;
+    color: #222;
+  }
+  .col-sub {
+    position: absolute;
+    font-size: 17px;
+    color: #666;
+    max-width: 620px;
+    line-height: 1.4;
+  }
+  .frame {
+    position: absolute;
+    background: #fff;
+    border: 2.5px solid #444;
+    border-radius: 3px;
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.12);
+  }
+  .frame-label {
+    position: absolute;
+    font-size: 16px;
+    font-weight: 700;
+    color: #444;
+  }
+  .z {
+    position: absolute;
+    border: 2px dashed #999;
+    background: repeating-linear-gradient(135deg, #f4f4f2, #f4f4f2 8px, #eaeae7 8px, #eaeae7 16px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #555;
+    text-align: center;
+    padding: 4px;
+    overflow: hidden;
+  }
+  .z.solid { border-style: solid; }
+  .z.buy { background: repeating-linear-gradient(135deg, #ffe3e3, #ffe3e3 8px, #ffd2d2 8px, #ffd2d2 16px); border-color: #d67a7a; color: #a13d3d; }
+  .z.sell { background: repeating-linear-gradient(135deg, #dbe9ff, #dbe9ff 8px, #cfe0ff 8px, #cfe0ff 16px); border-color: #6f93c9; color: #33538c; }
+  .z.dark { background: #333; border-color: #333; color: #ddd; }
+  .z.accent { border-color: #b8912e; }
+  .legend {
+    position: absolute;
+    background: #fff9ec;
+    border: 2px solid #c9a24a;
+    border-radius: 3px;
+    padding: 14px 18px;
+    font-size: 15px;
+    line-height: 1.8;
+  }
+  .legend h4 { margin: 0 0 6px; font-size: 17px; color: #8a6a1f; }
+  .legend .row { display: flex; gap: 8px; }
+  .legend .tag { font-weight: 700; min-width: 78px; }
+  .arrow {
+    position: absolute;
+    font-size: 22px;
+    color: #999;
+  }
+  .state-tag {
+    position: absolute;
+    font-size: 13px;
+    background: #333;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ A안 ============ -->
+<div class="col-title" style="left:40px; top:20px;">A안 — 탭 순차 전환형 (Full-page Tab Swap)</div>
+<div class="col-sub" style="left:40px; top:64px;">상단 고정 탭바로 화면 전체를 스와핑. 탭마다 밀도가 다른 현재 구조를 그대로 확장 — 한 번에 한 탭만 보임, 탭1은 여백 넉넉·탭2/3는 촘촘.</div>
+
+<!-- Main state: Tab1 -->
+<div class="frame-label" style="left:40px; top:150px;">상태 1 — 탭1(종합신호) 선택</div>
+<div class="frame" style="left:40px; top:180px; width:640px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:400px; height:34px;">종목검색바</div>
+  <div class="z solid" style="left:416px; top:8px; width:180px; height:34px;">탭1｜탭2｜탭3｜탭4｜탭5</div>
+  <div class="z solid" style="left:604px; top:8px; width:28px; height:34px;">⚙</div>
+  <div class="z" style="left:8px; top:50px; width:624px; height:36px;">종목 헤더 (현재가·등락률·거래량)</div>
+  <div class="z buy" style="left:8px; top:94px; width:624px; height:150px;">방향성 게이지 (히어로, 반원)</div>
+  <div class="z" style="left:8px; top:252px; width:624px; height:70px;">기여도 막대 요약</div>
+  <div class="z" style="left:8px; top:330px; width:624px; height:70px;">미니 캔들차트</div>
+  <div class="z" style="left:8px; top:408px; width:300px; height:44px;">신호 히스토리 타임라인</div>
+  <div class="z" style="left:316px; top:408px; width:316px; height:44px;">커뮤니티 / 알림</div>
+</div>
+
+<!-- Second state: Tab3 (dense) -->
+<div class="frame-label" style="left:720px; top:150px;">상태 2 — 탭3(수급) 선택 (같은 골격, 밀도만 급변)</div>
+<div class="frame" style="left:720px; top:180px; width:640px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:400px; height:34px;">종목검색바</div>
+  <div class="z solid" style="left:416px; top:8px; width:180px; height:34px;">탭1｜탭2｜탭3｜탭4｜탭5</div>
+  <div class="z solid" style="left:604px; top:8px; width:28px; height:34px;">⚙</div>
+  <div class="z sell" style="left:8px; top:50px; width:220px; height:402px;">호가창 (매도 위/매수 아래, 10호가)</div>
+  <div class="z" style="left:236px; top:50px; width:396px; height:96px;">외국인·기관 순매수 추이</div>
+  <div class="z" style="left:236px; top:154px; width:396px; height:80px;">프로그램 매매 동향</div>
+  <div class="z buy" style="left:236px; top:242px; width:396px; height:64px;">체결강도 미터</div>
+  <div class="z" style="left:236px; top:314px; width:396px; height:138px;">거래원 상위 테이블</div>
+</div>
+
+<div class="legend" style="left:40px; top:664px; width:1320px;">
+  <h4>탭 → 위치 매핑</h4>
+  <div class="row"><span class="tag">탭1~5</span><span>탭바 클릭 시 body 전체가 다른 탭 콘텐츠로 완전히 교체됨. 탭 간 이동 시 이전 탭 정보는 화면에서 완전히 사라짐 (교차 참조 불가).</span></div>
+  <div class="row"><span class="tag">설정</span><span>우측 상단 톱니 → 우측 슬라이드 패널 (탭과 무관하게 항상 같은 위치)</span></div>
+</div>
+
+<div class="arrow" style="left:1400px; top:400px;">⟶</div>
+
+<!-- ============ B안 ============ -->
+<div class="col-title" style="left:1600px; top:20px;">B안 — 좌측 고정 내비 + 우측 상시 컨텍스트 독</div>
+<div class="col-sub" style="left:1600px; top:64px;">탭을 세로 아이콘 레일로 이동. 어떤 탭을 보든 우측에 스코어·알림 미니 위젯이 항상 떠 있어 딥다이브 중에도 신호를 놓치지 않음.</div>
+
+<div class="frame-label" style="left:1600px; top:150px;">상태 1 — 탭2(기술적분석) 선택 시</div>
+<div class="frame" style="left:1600px; top:180px; width:660px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:110px; height:444px;">
+    검색<br>▬▬▬<br>①종합<br>②기술<br>③수급<br>④리스크<br>⑤관심<br>▬▬▬<br>⚙
+  </div>
+  <div class="z" style="left:126px; top:8px; width:344px; height:214px;">메인 캔들차트 (MA/VWAP/볼밴 토글)</div>
+  <div class="z" style="left:126px; top:230px; width:344px; height:80px;">거래량 서브패널</div>
+  <div class="z" style="left:126px; top:318px; width:164px; height:134px;">RSI / MACD 오실레이터</div>
+  <div class="z" style="left:298px; top:318px; width:172px; height:134px;">지표 테이블</div>
+  <div class="z accent" style="left:478px; top:8px; width:174px; height:130px;">상시 게이지 위젯 (미니)</div>
+  <div class="z accent" style="left:478px; top:146px; width:174px; height:150px;">상시 알림 피드</div>
+  <div class="z accent" style="left:478px; top:304px; width:174px; height:148px;">상시 커뮤니티 스니펫</div>
+</div>
+
+<div class="frame-label" style="left:2300px; top:150px;">상태 2 — 탭4(리스크) 선택 (레일·독은 그대로, 중앙만 교체)</div>
+<div class="frame" style="left:2300px; top:180px; width:520px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:90px; height:444px;">
+    검색<br>▬▬▬<br>①<br>②<br>③<br>④<br>⑤<br>▬▬▬<br>⚙
+  </div>
+  <div class="z" style="left:106px; top:8px; width:220px; height:130px;">진입가/ATR·R:R 선택</div>
+  <div class="z" style="left:106px; top:146px; width:220px; height:110px;">손절가·목표가 자동 산출</div>
+  <div class="z" style="left:106px; top:264px; width:220px; height:188px;">포지션 사이징 (계좌·리스크%)</div>
+  <div class="z accent" style="left:334px; top:8px; width:178px; height:130px;">상시 게이지 위젯 (미니)</div>
+  <div class="z accent" style="left:334px; top:146px; width:178px; height:150px;">상시 알림 피드</div>
+  <div class="z accent" style="left:334px; top:304px; width:178px; height:148px;">상시 커뮤니티 스니펫</div>
+  <div class="state-tag" style="left:334px; top:8px;">동일 독 유지</div>
+</div>
+
+<div class="legend" style="left:1600px; top:664px; width:1220px;">
+  <h4>탭 → 위치 매핑</h4>
+  <div class="row"><span class="tag">탭1~5</span><span>좌측 세로 레일 아이콘으로 전환, 중앙 캔버스만 바뀜. 우측 컨텍스트 독(게이지·알림·커뮤니티)은 탭과 무관하게 항상 고정 노출.</span></div>
+  <div class="row"><span class="tag">탭5</span><span>중앙 영역이 관심종목 랭킹+스크리너 테이블로 전환 (레일·독 구조는 동일)</span></div>
+  <div class="row"><span class="tag">설정</span><span>레일 하단 톱니 → 동일한 우측 슬라이드 패널</span></div>
+</div>
+
+<div class="arrow" style="left:2860px; top:400px;">⟶</div>
+
+<!-- ============ C안 ============ -->
+<div class="col-title" style="left:3060px; top:20px;">C안 — 탭 없는 3분할 워크스테이션 (아코디언)</div>
+<div class="col-sub" style="left:3060px; top:64px;">탭 내비게이션 자체를 없앰. 좌/중/우 3열이 항상 동시에 떠 있고, 중앙 열의 아코디언 섹션을 펼쳐/접어 원하는 탭 콘텐츠만 확장 — 여러 탭을 동시에 볼 수 있음.</div>
+
+<div class="frame-label" style="left:3060px; top:150px;">상태 1 — '종합신호' 섹션만 펼침</div>
+<div class="frame" style="left:3060px; top:180px; width:640px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:624px; height:34px;">종목검색바 ······················· ⚙</div>
+  <div class="z" style="left:8px; top:50px; width:150px; height:402px;">관심종목 칩<br>+ 스크리너<br>랭킹 테이블<br>(탭5 상시)</div>
+  <div class="z buy" style="left:166px; top:50px; width:302px; height:180px;">▾ 종합 신호 — 게이지·기여도 (펼침)</div>
+  <div class="z" style="left:166px; top:238px; width:302px; height:38px;">▸ 기술적 분석 (접힘)</div>
+  <div class="z" style="left:166px; top:284px; width:302px; height:38px;">▸ 리스크·전략 (접힘)</div>
+  <div class="z" style="left:166px; top:330px; width:302px; height:122px;">커뮤니티 / 뉴스 (하단 고정)</div>
+  <div class="z sell" style="left:476px; top:50px; width:156px; height:402px;">호가창 +<br>수급 미터<br>(탭3 상시)</div>
+</div>
+
+<div class="frame-label" style="left:3740px; top:150px;">상태 2 — '기술적 분석' 섹션을 펼침 (다른 섹션은 접힘, 좌/우 열은 그대로)</div>
+<div class="frame" style="left:3740px; top:180px; width:640px; height:460px;">
+  <div class="z solid" style="left:8px; top:8px; width:624px; height:34px;">종목검색바 ······················· ⚙</div>
+  <div class="z" style="left:8px; top:50px; width:150px; height:402px;">관심종목 칩<br>+ 스크리너<br>랭킹 테이블<br>(탭5 상시)</div>
+  <div class="z" style="left:166px; top:50px; width:302px; height:38px;">▸ 종합 신호 (접힘)</div>
+  <div class="z" style="left:166px; top:96px; width:302px; height:270px;">▾ 기술적 분석 — 캔들·오실레이터 (펼침)</div>
+  <div class="z" style="left:166px; top:374px; width:302px; height:38px;">▸ 리스크·전략 (접힘)</div>
+  <div class="z sell" style="left:476px; top:50px; width:156px; height:402px;">호가창 +<br>수급 미터<br>(탭3 상시)</div>
+  <div class="state-tag" style="left:8px; top:456px;">좌/우 열 위치 고정, 중앙만 아코디언 전환</div>
+</div>
+
+<div class="legend" style="left:3060px; top:664px; width:1320px;">
+  <h4>탭 → 위치 매핑</h4>
+  <div class="row"><span class="tag">탭1·2·4</span><span>중앙 열의 아코디언 3섹션(종합신호/기술적분석/리스크전략)으로 재배치 — 한 번에 하나만 펼치거나 여러 개 동시에 펼침 가능</span></div>
+  <div class="row"><span class="tag">탭3</span><span>우측 열에 상시 고정 (호가창·수급) — 탭이 아니라 항상 보이는 패널</span></div>
+  <div class="row"><span class="tag">탭5</span><span>좌측 열에 상시 고정 (관심종목·스크리너) — 역시 상시 패널로 승격</span></div>
+  <div class="row"><span class="tag">설정</span><span>검색바 우측 톱니 → 동일한 우측 슬라이드 패널</span></div>
+</div>
+
+</body>
+</html>

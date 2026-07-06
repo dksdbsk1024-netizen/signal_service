@@ -1,0 +1,14 @@
+<!-- @dsCard group="Colors" viewport="700x110" name="Accent & Status" subtitle="비방향성 강조색(골드) · 장 상태 배지 색" -->
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+body{margin:0;background:var(--bg-base);padding:16px;font-family:var(--font-body);display:flex;gap:24px;}
+.item{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);}
+.dot{width:40px;height:40px;border-radius:50%;}
+</style></head>
+<body data-theme="dark">
+<div class="item"><div class="dot" style="background:var(--accent);"></div>accent (강조)</div>
+<div class="item"><div class="dot" style="background:var(--status-live);"></div>장중</div>
+<div class="item"><div class="dot" style="background:var(--status-after);"></div>시간외</div>
+<div class="item"><div class="dot" style="background:var(--status-closed);"></div>장마감</div>
+</body></html>

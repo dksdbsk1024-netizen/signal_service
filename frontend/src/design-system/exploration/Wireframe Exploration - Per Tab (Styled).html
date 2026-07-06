@@ -1,0 +1,253 @@
+<!-- @dsCard group="Exploration" viewport="1600x900" name="와이어프레임 3안 — 탭별 상세" subtitle="5개 탭 × 3가지 정보구조, 실제 디자인 토큰 적용 (중간 충실도)" -->
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="design_doc_mode" content="canvas">
+<title>와이어프레임 3안 — 탭별 상세</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #d9dadb; font-family: var(--font-body); }
+  .row-title { position: absolute; font-size: 22px; font-weight: 900; color: #23282e; }
+  .row-sub { position: absolute; font-size: 13px; color: #55606b; max-width: 900px; line-height: 1.4; }
+  .col-title { position: absolute; font-size: 12px; font-weight: 700; color: #444; text-align: center; width: 520px; }
+
+  .tf {
+    position: absolute; width: 520px; height: 325px;
+    background: var(--bg-base); border: 1px solid var(--border-default);
+    border-radius: var(--radius-md); overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .topbar {
+    position: absolute; left: 0; top: 0; width: 100%; height: 28px;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border-default);
+    display: flex; align-items: center; padding: 0 8px; gap: 10px;
+    font-size: 10px; color: var(--text-secondary);
+  }
+  .topbar .tabs { display: flex; gap: 8px; font-weight: 700; color: var(--text-tertiary); }
+  .topbar .tabs .on { color: var(--accent); border-bottom: 2px solid var(--accent); }
+  .zone {
+    position: absolute; background: var(--bg-surface); border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm); font-size: 10px; color: var(--text-secondary);
+    padding: 5px 7px; line-height: 1.35; overflow: hidden;
+  }
+  .zone b { color: var(--text-primary); font-weight: 700; }
+  .zone.buy { background: var(--signal-buy-bg); border-color: var(--signal-buy-border); color: var(--signal-buy); }
+  .zone.sell { background: var(--signal-sell-bg); border-color: var(--signal-sell-border); color: var(--signal-sell); }
+  .zone.accent { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-strong); }
+  .zone.inset { background: var(--bg-inset); }
+  .zone.highlight { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .rail {
+    position: absolute; left: 0; top: 0; width: 56px; height: 100%;
+    background: var(--bg-surface); border-right: 1px solid var(--border-default);
+    display: flex; flex-direction: column; align-items: center; padding-top: 8px; gap: 8px;
+    font-size: 9px; color: var(--text-tertiary); font-weight: 700;
+  }
+  .rail .on { color: var(--accent); }
+  .taptag { position: absolute; font-size: 9px; background: var(--accent); color: #14100a; font-weight: 700; padding: 1px 6px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="row-title" style="left:40px; top:24px;">A안 — 탭 순차 전환형 (풀페이지 스와핑)</div>
+<div class="row-sub" style="left:40px; top:54px;">상단 고정 탭바로 5개 화면 완전 교체. 탭1은 여백형, 탭2·3은 고밀도.</div>
+
+<!-- ============ ROW A ============ -->
+<!-- A - Tab1 -->
+<div class="col-title" style="left:40px; top:86px;">탭1 · 종합 신호</div>
+<div class="tf" style="left:40px; top:110px;">
+  <div class="topbar"><span>🔍 종목검색</span><span class="tabs"><span class="on">종합</span><span>기술</span><span>수급</span><span>리스크</span><span>관심</span></span><span>⚙</span></div>
+  <div class="zone" style="left:8px; top:32px; width:504px; height:22px;"><b>삼성전자 005930</b> · 71,300 · +1.8% · 12.4M · 425.7조</div>
+  <div class="zone buy" style="left:8px; top:58px; width:504px; height:100px;">◐ <b>방향성 게이지</b> — 매수 62 (히어로, 반원 게이지 + 스코어)</div>
+  <div class="zone" style="left:8px; top:162px; width:504px; height:48px;">기여도: 수급 +18 · 모멘텀 +11 · 추세 +6 · 변동성 -9 · 거래량 -3</div>
+  <div class="zone inset" style="left:8px; top:214px; width:504px; height:48px;">미니 캔들차트 + VWAP 오버레이</div>
+  <div class="zone" style="left:8px; top:266px; width:248px; height:48px;">신호 히스토리 타임라인</div>
+  <div class="zone" style="left:264px; top:266px; width:248px; height:48px;">커뮤니티 · 알림 · 뉴스</div>
+</div>
+
+<!-- A - Tab2 -->
+<div class="col-title" style="left:596px; top:86px;">탭2 · 기술적 분석</div>
+<div class="tf" style="left:596px; top:110px;">
+  <div class="topbar"><span>🔍 종목검색</span><span class="tabs"><span>종합</span><span class="on">기술</span><span>수급</span><span>리스크</span><span>관심</span></span><span>⚙</span></div>
+  <div class="zone" style="left:8px; top:32px; width:504px; height:20px;">1분｜5분｜일봉 · MA/VWAP/볼밴 토글</div>
+  <div class="zone inset" style="left:8px; top:56px; width:504px; height:110px;">메인 캔들차트 (오버레이)</div>
+  <div class="zone" style="left:8px; top:170px; width:504px; height:30px;">거래량 서브패널</div>
+  <div class="zone" style="left:8px; top:204px; width:248px; height:55px;">RSI · MACD · Stochastic (접기/펼치기)</div>
+  <div class="zone" style="left:264px; top:204px; width:248px; height:55px;">지표 테이블 (지표명·값·신호)</div>
+  <div class="zone accent" style="left:8px; top:263px; width:504px; height:50px;">⤢ 차트 전체화면 딥다이브 모드</div>
+</div>
+
+<!-- A - Tab3 -->
+<div class="col-title" style="left:1152px; top:86px;">탭3 · 수급</div>
+<div class="tf" style="left:1152px; top:110px;">
+  <div class="topbar"><span>🔍 종목검색</span><span class="tabs"><span>종합</span><span>기술</span><span class="on">수급</span><span>리스크</span><span>관심</span></span><span>⚙</span></div>
+  <div class="zone sell" style="left:8px; top:32px; width:160px; height:136px;">매도 호가 (파랑, 상단)</div>
+  <div class="zone buy" style="left:8px; top:172px; width:160px; height:141px;">매수 호가 (빨강, 하단) · 10호가</div>
+  <div class="zone" style="left:176px; top:32px; width:336px; height:70px;">외국인·기관 순매수 추이 (일별/누적)</div>
+  <div class="zone" style="left:176px; top:106px; width:336px; height:55px;">프로그램 매매 동향</div>
+  <div class="zone accent" style="left:176px; top:165px; width:336px; height:55px;">체결강도 미터</div>
+  <div class="zone" style="left:176px; top:224px; width:336px; height:89px;">거래원 상위 테이블</div>
+</div>
+
+<!-- A - Tab4 -->
+<div class="col-title" style="left:1708px; top:86px;">탭4 · 리스크/전략</div>
+<div class="tf" style="left:1708px; top:110px;">
+  <div class="topbar"><span>🔍 종목검색</span><span class="tabs"><span>종합</span><span>기술</span><span>수급</span><span class="on">리스크</span><span>관심</span></span><span>⚙</span></div>
+  <div class="zone" style="left:8px; top:32px; width:504px; height:60px;">진입가 / ATR 배수 / R:R 선택</div>
+  <div class="zone sell" style="left:8px; top:96px; width:248px; height:60px;">손절가 자동 산출</div>
+  <div class="zone buy" style="left:264px; top:96px; width:248px; height:60px;">목표가 자동 산출</div>
+  <div class="zone inset" style="left:8px; top:160px; width:504px; height:100px;">포지션 사이징 (계좌 규모 · 감당 리스크 %)</div>
+  <div class="zone accent" style="left:8px; top:264px; width:504px; height:50px;">R:R 요약 · 예상 손익</div>
+</div>
+
+<!-- A - Tab5 -->
+<div class="col-title" style="left:2264px; top:86px;">탭5 · 관심종목/스크리너</div>
+<div class="tf" style="left:2264px; top:110px;">
+  <div class="topbar"><span>🔍 종목검색</span><span class="tabs"><span>종합</span><span>기술</span><span>수급</span><span>리스크</span><span class="on">관심</span></span><span>⚙</span></div>
+  <div class="zone" style="left:8px; top:32px; width:504px; height:22px;">지수 스트립 (코스피 · 코스닥)</div>
+  <div class="zone" style="left:8px; top:58px; width:300px; height:30px;">관심종목 칩</div>
+  <div class="zone" style="left:8px; top:92px; width:300px; height:55px;">조건 빌더 (정적 데모)</div>
+  <div class="zone inset" style="left:8px; top:151px; width:300px; height:163px;">조건 충족 랭킹 테이블</div>
+  <div class="zone accent" style="left:316px; top:58px; width:196px; height:140px;">실시간 스코어 랭킹 패널</div>
+  <div class="zone" style="left:316px; top:202px; width:196px; height:112px;">선택 종목 미니차트 · 근거 요약</div>
+</div>
+
+<!-- ============ ROW B ============ -->
+<div class="row-title" style="left:40px; top:474px;">B안 — 좌측 고정 내비 + 우측 상시 컨텍스트 독</div>
+<div class="row-sub" style="left:40px; top:504px;">탭은 좌측 세로 아이콘 레일로. 우측 독(게이지·알림·커뮤니티)은 어느 탭에서든 항상 노출.</div>
+
+<!-- B - Tab1 -->
+<div class="col-title" style="left:40px; top:536px;">탭1 · 종합 신호</div>
+<div class="tf" style="left:40px; top:560px;">
+  <div class="rail"><span>🔍</span><span class="on">①</span><span>②</span><span>③</span><span>④</span><span>⑤</span><span style="margin-top:auto;">⚙</span></div>
+  <div class="zone accent" style="left:400px; top:8px; width:112px; height:100px;">상시 게이지 (미니)</div>
+  <div class="zone accent" style="left:400px; top:112px; width:112px; height:100px;">상시 알림 피드</div>
+  <div class="zone accent" style="left:400px; top:216px; width:112px; height:101px;">상시 커뮤니티</div>
+  <div class="zone" style="left:64px; top:8px; width:328px; height:22px;">종목 헤더</div>
+  <div class="zone buy" style="left:64px; top:34px; width:328px; height:90px;">방향성 게이지 (미니)</div>
+  <div class="zone" style="left:64px; top:128px; width:328px; height:80px;">기여도 막대</div>
+  <div class="zone inset" style="left:64px; top:212px; width:328px; height:97px;">미니 캔들차트</div>
+</div>
+
+<!-- B - Tab2 -->
+<div class="col-title" style="left:596px; top:536px;">탭2 · 기술적 분석</div>
+<div class="tf" style="left:596px; top:560px;">
+  <div class="rail"><span>🔍</span><span>①</span><span class="on">②</span><span>③</span><span>④</span><span>⑤</span><span style="margin-top:auto;">⚙</span></div>
+  <div class="zone accent" style="left:400px; top:8px; width:112px; height:100px;">상시 게이지</div>
+  <div class="zone accent" style="left:400px; top:112px; width:112px; height:100px;">상시 알림</div>
+  <div class="zone accent" style="left:400px; top:216px; width:112px; height:101px;">상시 커뮤니티</div>
+  <div class="zone" style="left:64px; top:8px; width:328px; height:20px;">1분｜5분｜일봉</div>
+  <div class="zone inset" style="left:64px; top:32px; width:328px; height:120px;">메인 캔들차트 (오버레이)</div>
+  <div class="zone" style="left:64px; top:156px; width:328px; height:70px;">오실레이터 + 지표 테이블</div>
+  <div class="zone accent" style="left:64px; top:230px; width:328px; height:79px;">⤢ 딥다이브 진입</div>
+</div>
+
+<!-- B - Tab3 -->
+<div class="col-title" style="left:1152px; top:536px;">탭3 · 수급</div>
+<div class="tf" style="left:1152px; top:560px;">
+  <div class="rail"><span>🔍</span><span>①</span><span>②</span><span class="on">③</span><span>④</span><span>⑤</span><span style="margin-top:auto;">⚙</span></div>
+  <div class="zone accent" style="left:400px; top:8px; width:112px; height:100px;">상시 게이지</div>
+  <div class="zone accent" style="left:400px; top:112px; width:112px; height:100px;">상시 알림</div>
+  <div class="zone accent" style="left:400px; top:216px; width:112px; height:101px;">상시 커뮤니티</div>
+  <div class="zone sell" style="left:64px; top:8px; width:328px; height:74px;">매도 호가</div>
+  <div class="zone buy" style="left:64px; top:86px; width:328px; height:72px;">매수 호가</div>
+  <div class="zone" style="left:64px; top:162px; width:328px; height:60px;">순매수 추이 요약</div>
+  <div class="zone accent" style="left:64px; top:226px; width:328px; height:83px;">체결강도 미터</div>
+</div>
+
+<!-- B - Tab4 -->
+<div class="col-title" style="left:1708px; top:536px;">탭4 · 리스크/전략</div>
+<div class="tf" style="left:1708px; top:560px;">
+  <div class="rail"><span>🔍</span><span>①</span><span>②</span><span>③</span><span class="on">④</span><span>⑤</span><span style="margin-top:auto;">⚙</span></div>
+  <div class="zone accent" style="left:400px; top:8px; width:112px; height:100px;">상시 게이지</div>
+  <div class="zone accent" style="left:400px; top:112px; width:112px; height:100px;">상시 알림</div>
+  <div class="zone accent" style="left:400px; top:216px; width:112px; height:101px;">상시 커뮤니티</div>
+  <div class="zone" style="left:64px; top:8px; width:328px; height:60px;">진입가 / ATR / R:R</div>
+  <div class="zone sell" style="left:64px; top:72px; width:160px; height:60px;">손절가</div>
+  <div class="zone buy" style="left:232px; top:72px; width:160px; height:60px;">목표가</div>
+  <div class="zone inset" style="left:64px; top:136px; width:328px; height:90px;">포지션 사이징</div>
+  <div class="zone accent" style="left:64px; top:230px; width:328px; height:79px;">R:R 요약</div>
+</div>
+
+<!-- B - Tab5 -->
+<div class="col-title" style="left:2264px; top:536px;">탭5 · 관심종목/스크리너</div>
+<div class="tf" style="left:2264px; top:560px;">
+  <div class="rail"><span>🔍</span><span>①</span><span>②</span><span>③</span><span>④</span><span class="on">⑤</span><span style="margin-top:auto;">⚙</span></div>
+  <div class="zone accent" style="left:400px; top:8px; width:112px; height:100px;">상시 게이지</div>
+  <div class="zone accent" style="left:400px; top:112px; width:112px; height:100px;">상시 알림</div>
+  <div class="zone accent" style="left:400px; top:216px; width:112px; height:101px;">상시 커뮤니티</div>
+  <div class="zone" style="left:64px; top:8px; width:328px; height:26px;">관심종목 칩</div>
+  <div class="zone inset" style="left:64px; top:38px; width:328px; height:140px;">조건 충족 랭킹 테이블</div>
+  <div class="zone accent" style="left:64px; top:182px; width:328px; height:127px;">스코어 랭킹 · 미니차트</div>
+</div>
+
+<!-- ============ ROW C ============ -->
+<div class="row-title" style="left:40px; top:924px;">C안 — 탭 없는 3분할 워크스테이션 (아코디언)</div>
+<div class="row-sub" style="left:40px; top:954px;">탭바 폐지. 좌(관심/스크리너)·우(호가/수급)는 상시 패널로 승격, 중앙만 아코디언으로 종합신호·기술분석·리스크 전환.</div>
+
+<!-- C - Tab1 -->
+<div class="col-title" style="left:40px; top:986px;">'탭1' = 종합신호 펼침</div>
+<div class="tf" style="left:40px; top:1010px;">
+  <div class="zone" style="left:8px; top:8px; width:504px; height:22px;">🔍 종목검색 ····················· ⚙</div>
+  <div class="zone" style="left:8px; top:38px; width:110px; height:279px;">관심종목 칩<br>+ 스크리너<br>랭킹 (상시)</div>
+  <div class="zone sell" style="left:126px; top:38px; width:268px; height:70px;">매도 호가 (상시 아님·중앙)</div>
+  <div class="zone buy" style="left:126px; top:112px; width:268px; height:110px;">▾ 종합 신호 — 게이지·기여도 (펼침)</div>
+  <div class="zone" style="left:126px; top:226px; width:268px; height:35px;">▸ 기술적 분석 (접힘)</div>
+  <div class="zone" style="left:126px; top:265px; width:268px; height:35px;">▸ 리스크·전략 (접힘)</div>
+  <div class="zone sell" style="left:402px; top:38px; width:110px; height:140px;">매도 호가 (상시)</div>
+  <div class="zone buy" style="left:402px; top:182px; width:110px; height:135px;">매수 호가 (상시)</div>
+</div>
+
+<!-- C - Tab2 -->
+<div class="col-title" style="left:596px; top:986px;">'탭2' = 기술분석 펼침</div>
+<div class="tf" style="left:596px; top:1010px;">
+  <div class="zone" style="left:8px; top:8px; width:504px; height:22px;">🔍 종목검색 ····················· ⚙</div>
+  <div class="zone" style="left:8px; top:38px; width:110px; height:279px;">관심종목 칩<br>+ 스크리너<br>랭킹 (상시)</div>
+  <div class="zone" style="left:126px; top:38px; width:268px; height:35px;">▸ 종합 신호 (접힘)</div>
+  <div class="zone inset" style="left:126px; top:77px; width:268px; height:190px;">▾ 기술적 분석 — 캔들 · 오실레이터 (펼침)</div>
+  <div class="zone" style="left:126px; top:271px; width:268px; height:29px;">▸ 리스크·전략 (접힘)</div>
+  <div class="zone sell" style="left:402px; top:38px; width:110px; height:140px;">매도 호가 (상시)</div>
+  <div class="zone buy" style="left:402px; top:182px; width:110px; height:135px;">매수 호가 (상시)</div>
+</div>
+
+<!-- C - Tab3 -->
+<div class="col-title" style="left:1152px; top:986px;">'탭3' = 수급 열 강조</div>
+<div class="tf" style="left:1152px; top:1010px;">
+  <div class="taptag" style="left:410px; top:14px;">탭3 = 이 열</div>
+  <div class="zone" style="left:8px; top:8px; width:504px; height:22px;">🔍 종목검색 ····················· ⚙</div>
+  <div class="zone" style="left:8px; top:38px; width:110px; height:279px;">관심종목 칩<br>+ 스크리너<br>랭킹 (상시)</div>
+  <div class="zone" style="left:126px; top:38px; width:268px; height:35px;">▸ 종합 신호 (접힘)</div>
+  <div class="zone" style="left:126px; top:77px; width:268px; height:35px;">▸ 기술적 분석 (접힘)</div>
+  <div class="zone" style="left:126px; top:116px; width:268px; height:35px;">▸ 리스크·전략 (접힘)</div>
+  <div class="zone sell highlight" style="left:402px; top:38px; width:110px; height:140px;">매도 호가</div>
+  <div class="zone buy highlight" style="left:402px; top:182px; width:110px; height:135px;">매수 호가 + 체결강도</div>
+</div>
+
+<!-- C - Tab4 -->
+<div class="col-title" style="left:1708px; top:986px;">'탭4' = 리스크 펼침</div>
+<div class="tf" style="left:1708px; top:1010px;">
+  <div class="zone" style="left:8px; top:8px; width:504px; height:22px;">🔍 종목검색 ····················· ⚙</div>
+  <div class="zone" style="left:8px; top:38px; width:110px; height:279px;">관심종목 칩<br>+ 스크리너<br>랭킹 (상시)</div>
+  <div class="zone" style="left:126px; top:38px; width:268px; height:35px;">▸ 종합 신호 (접힘)</div>
+  <div class="zone" style="left:126px; top:77px; width:268px; height:35px;">▸ 기술적 분석 (접힘)</div>
+  <div class="zone accent" style="left:126px; top:116px; width:268px; height:201px;">▾ 리스크·전략 — 진입/손절/목표/사이징 (펼침)</div>
+  <div class="zone sell" style="left:402px; top:38px; width:110px; height:140px;">매도 호가 (상시)</div>
+  <div class="zone buy" style="left:402px; top:182px; width:110px; height:135px;">매수 호가 (상시)</div>
+</div>
+
+<!-- C - Tab5 -->
+<div class="col-title" style="left:2264px; top:986px;">'탭5' = 관심/스크리너 열 강조</div>
+<div class="tf" style="left:2264px; top:1010px;">
+  <div class="taptag" style="left:14px; top:14px;">탭5 = 이 열</div>
+  <div class="zone" style="left:8px; top:8px; width:504px; height:22px;">🔍 종목검색 ····················· ⚙</div>
+  <div class="zone highlight" style="left:8px; top:38px; width:110px; height:279px;">관심종목 칩<br>+ 조건빌더<br>+ 랭킹 (상시)</div>
+  <div class="zone" style="left:126px; top:38px; width:268px; height:35px;">▸ 종합 신호 (접힘)</div>
+  <div class="zone" style="left:126px; top:77px; width:268px; height:35px;">▸ 기술적 분석 (접힘)</div>
+  <div class="zone" style="left:126px; top:116px; width:268px; height:35px;">▸ 리스크·전략 (접힘)</div>
+  <div class="zone sell" style="left:402px; top:38px; width:110px; height:140px;">매도 호가 (상시)</div>
+  <div class="zone buy" style="left:402px; top:182px; width:110px; height:135px;">매수 호가 (상시)</div>
+</div>
+
+</body>
+</html>
