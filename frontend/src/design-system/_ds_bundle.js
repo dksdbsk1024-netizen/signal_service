@@ -159,9 +159,9 @@ function CandleChart({
       strokeWidth: "1",
       opacity: "0.5"
     }), /*#__PURE__*/React.createElement("text", {
-      x: plotLeft - 8,
+      x: plotLeft - 4,
       y: y + 3,
-      fontSize: "18",
+      fontSize: "12",
       textAnchor: "end",
       fill: "var(--text-tertiary)",
       fontFamily: "var(--font-numeric)"
