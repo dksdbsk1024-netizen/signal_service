@@ -57,6 +57,17 @@ def test_technical_schema():
     assert {"ma5", "ma20", "ma60", "vwap", "bb_upper", "bb_mid", "bb_lower"} <= set(body["overlays"])
     assert len(body["indicators_table"]) >= 5
     assert {"name", "value", "signal"} <= set(body["indicators_table"][0])
+    # 신규 오버레이
+    assert {"ichimoku", "fibonacci"} <= set(body["overlays"])
+    ichi = body["overlays"]["ichimoku"]
+    assert {"tenkan", "kijun", "senkou_a", "senkou_b", "chikou"} <= set(ichi)
+    assert len(ichi["tenkan"]) == 100
+    fib = body["overlays"]["fibonacci"]
+    assert {"swing_high", "swing_low", "direction", "levels"} <= set(fib)
+    assert len(fib["levels"]) == 6
+    # 테이블에 신규 지표 행
+    names = {row["name"] for row in body["indicators_table"]}
+    assert {"OBV 다이버전스", "ATR밴드 위치"} <= names
 
 
 def test_flow_schema():
