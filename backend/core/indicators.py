@@ -116,6 +116,33 @@ def volume_surge(volume: pd.Series, lookback: int = config.VOL_LOOKBACK) -> floa
     return float(volume.iloc[-1] / baseline)
 
 
+def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
+    """On-Balance Volume. 상승봉 +거래량, 하락봉 −거래량 누적."""
+    direction = np.sign(close.diff().fillna(0.0))
+    return (direction * volume).cumsum()
+
+
+def obv_divergence(
+    close: pd.Series, volume: pd.Series, lookback: int = config.OBV_LOOKBACK
+) -> float:
+    """창(lookback) 내 OBV 상대강도 − 가격 상대강도. 상승 다이버전스=+, 하락=−, 동행≈0.
+
+    각 변화량을 창 내 범위로 정규화(−1~+1)해 스케일 차이를 제거한다.
+    """
+    if len(close) < lookback + 1:
+        return 0.0
+    ob = obv(close, volume)
+    c = close.iloc[-(lookback + 1):]
+    o = ob.iloc[-(lookback + 1):]
+    c_rng = c.max() - c.min()
+    o_rng = o.max() - o.min()
+    if c_rng == 0 or o_rng == 0:
+        return 0.0
+    price_norm = (c.iloc[-1] - c.iloc[0]) / c_rng
+    obv_norm = (o.iloc[-1] - o.iloc[0]) / o_rng
+    return float(obv_norm - price_norm)
+
+
 # ── 변동성 ─────────────────────────────────────────────────────
 def bollinger(
     close: pd.Series, period: int = config.BB_PERIOD, num_std: float = config.BB_STD
@@ -139,6 +166,93 @@ def atr(
         [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
     ).max(axis=1)
     return tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+
+def atr_band(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = config.BB_PERIOD,
+    mult: float = config.ATR_BAND_MULT,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """ATR 밴드 → (upper, mid, lower). 중심=SMA(close,period), 폭=mult×ATR(14)."""
+    mid = close.rolling(window=period, min_periods=period).mean()
+    a = atr(high, low, close)
+    upper = mid + mult * a
+    lower = mid - mult * a
+    return upper, mid, lower
+
+
+def atr_band_position(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = config.BB_PERIOD,
+    mult: float = config.ATR_BAND_MULT,
+) -> float:
+    """현재가의 ATR밴드 내 위치. 0=하단, 0.5=중심, 1=상단."""
+    upper, _mid, lower = atr_band(high, low, close, period, mult)
+    u, l, c = upper.iloc[-1], lower.iloc[-1], close.iloc[-1]
+    width = u - l
+    if pd.isna(width) or width == 0:
+        return 0.5
+    return float((c - l) / width)
+
+
+# ── 차트 오버레이 전용 (스코어 무관) ───────────────────────────
+def ichimoku(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    conv: int = 9,
+    base: int = 26,
+    span_b: int = 52,
+    disp: int = 26,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+    """일목균형표 → (전환선, 기준선, 선행스팬A, 선행스팬B, 후행스팬).
+
+    선행스팬은 +disp 미래 전위, 후행스팬은 −disp 과거 전위. 배열 길이는 입력과
+    같게 유지 — 마지막 캔들 너머 미래 구름은 드롭(분봉 스캘핑엔 최근 구름이 핵심).
+    """
+    def mid(period: int) -> pd.Series:
+        hh = high.rolling(window=period, min_periods=period).max()
+        ll = low.rolling(window=period, min_periods=period).min()
+        return (hh + ll) / 2
+
+    tenkan = mid(conv)
+    kijun = mid(base)
+    senkou_a = ((tenkan + kijun) / 2).shift(disp)
+    senkou_b = mid(span_b).shift(disp)
+    chikou = close.shift(-disp)
+    return tenkan, kijun, senkou_a, senkou_b, chikou
+
+
+def fibonacci_levels(
+    high: pd.Series,
+    low: pd.Series,
+    ratios: tuple[float, ...] = (0.0, 0.236, 0.382, 0.5, 0.618, 1.0),
+) -> dict:
+    """최근 스윙 고/저 기준 피보나치 되돌림.
+
+    고점·저점의 발생 순서로 스윙 방향 판정. 상승(저점→고점)이면 0%=고점에서
+    저점으로 내려가는 되돌림, 하락이면 0%=저점에서 고점으로 올라가는 되돌림.
+    """
+    hi = float(high.max())
+    lo = float(low.min())
+    hi_idx = int(np.asarray(high).argmax())
+    lo_idx = int(np.asarray(low).argmin())
+    direction = "up" if lo_idx <= hi_idx else "down"
+    diff = hi - lo
+    levels = []
+    for r in ratios:
+        price = hi - diff * r if direction == "up" else lo + diff * r
+        levels.append({"ratio": r, "price": round(price, 2)})
+    return {
+        "swing_high": round(hi, 2),
+        "swing_low": round(lo, 2),
+        "direction": direction,
+        "levels": levels,
+    }
 
 
 # ── 수급 ───────────────────────────────────────────────────────
@@ -185,6 +299,8 @@ def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -
     pct_k, pct_d = stochastic(high, low, close)
     _, _, _, pct_b = bollinger(close)
     atr_series = atr(high, low, close)
+    obv_div = obv_divergence(close, volume)
+    atr_pos = atr_band_position(high, low, close)
 
     def last(series: pd.Series) -> float:
         val = series.iloc[-1]
@@ -202,8 +318,8 @@ def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -
             "stoch_d": last(pct_d),
         },
         volume={"surge": volume_surge(volume)},
-        volatility={"pct_b": last(pct_b)},
-        flow=flow_metrics(investor_flow or {}),
+        volatility={"pct_b": last(pct_b), "atr_band": atr_pos},
+        flow={**flow_metrics(investor_flow or {}), "obv": obv_div},
         last_close=last(close),
         last_atr=last(atr_series),
     )

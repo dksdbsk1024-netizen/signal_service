@@ -63,6 +63,18 @@ def get_technical(
         "bb_lower": _clean(bb_lower),
     }
 
+    # 차트 오버레이 전용 (스코어 무관)
+    high, low = ohlcv["high"], ohlcv["low"]
+    tenkan, kijun, senkou_a, senkou_b, chikou = ind_mod.ichimoku(high, low, close)
+    overlays["ichimoku"] = {
+        "tenkan": _clean(tenkan),
+        "kijun": _clean(kijun),
+        "senkou_a": _clean(senkou_a),
+        "senkou_b": _clean(senkou_b),
+        "chikou": _clean(chikou),
+    }
+    overlays["fibonacci"] = ind_mod.fibonacci_levels(high, low)
+
     # 지표 테이블 — 현재값 + 신호 (scoring 정규화 재사용)
     table = [
         {"name": "RSI(14)", "value": round(ind.momentum["rsi"], 1),
@@ -77,6 +89,10 @@ def get_technical(
          "signal": _signal_label(scoring.score_ma_alignment(ind.trend["ma_alignment"]))},
         {"name": "VWAP 괴리(%)", "value": round(ind.trend["price_vs_vwap"], 2),
          "signal": _signal_label(scoring.score_price_vs_vwap(ind.trend["price_vs_vwap"]))},
+        {"name": "OBV 다이버전스", "value": round(ind.flow["obv"], 2),
+         "signal": _signal_label(scoring.score_obv(ind.flow["obv"]))},
+        {"name": "ATR밴드 위치", "value": round(ind.volatility["atr_band"], 2),
+         "signal": _signal_label(scoring.score_atr_band(ind.volatility["atr_band"]))},
         {"name": "ATR(14)", "value": round(ind.last_atr, 1), "signal": "-"},
     ]
 

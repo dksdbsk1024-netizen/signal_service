@@ -51,6 +51,17 @@ function linePath(values, xAt, yAt) {
   return d.trim();
 }
 
+// 선행스팬 A/B 사이 구름 폴리곤. 둘 다 non-null인 인덱스 구간만 채운다.
+function cloudPath(aVals, bVals, xAt, yAt) {
+  if (!aVals || !bVals) return "";
+  const idx = [];
+  aVals.forEach((v, i) => { if (v != null && bVals[i] != null) idx.push(i); });
+  if (idx.length < 2) return "";
+  const top = idx.map((i) => `${xAt(i).toFixed(1)} ${yAt(aVals[i]).toFixed(1)}`);
+  const bot = idx.slice().reverse().map((i) => `${xAt(i).toFixed(1)} ${yAt(bVals[i]).toFixed(1)}`);
+  return `M ${top.join(" L ")} L ${bot.join(" L ")} Z`;
+}
+
 function OverlayLayer({ candles, overlays, show }) {
   const { xAt, yAt } = useMemo(() => buildScale(candles), [candles]);
   const lines = [
@@ -60,12 +71,36 @@ function OverlayLayer({ candles, overlays, show }) {
     { key: "bb_upper", on: show.bb, color: "rgba(139,152,165,0.6)", val: overlays.bb_upper, dash: "4 3" },
     { key: "bb_lower", on: show.bb, color: "rgba(139,152,165,0.6)", val: overlays.bb_lower, dash: "4 3" },
   ];
+  const ichi = overlays.ichimoku;
+  const ichiLines = ichi ? [
+    { key: "tenkan", color: "#e0a458", val: ichi.tenkan },              // 전환선
+    { key: "kijun", color: "#5a8fd9", val: ichi.kijun },               // 기준선
+    { key: "chikou", color: "#9aa4b0", val: ichi.chikou, dash: "2 3" }, // 후행스팬
+  ] : [];
+  const fib = overlays.fibonacci;
   return (
     <svg viewBox={`0 0 ${VB_W} ${CHART_H}`} width="100%" height={CHART_H} preserveAspectRatio="none"
       style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
+      {show.ichimoku && ichi && (
+        <path d={cloudPath(ichi.senkou_a, ichi.senkou_b, xAt, yAt)} fill="rgba(90,169,160,0.18)" stroke="none" />
+      )}
       {lines.filter((l) => l.on && l.val).map((l) => (
         <path key={l.key} d={linePath(l.val, xAt, yAt)} fill="none" stroke={l.color} strokeWidth={1.5} strokeDasharray={l.dash} opacity={0.9} />
       ))}
+      {show.ichimoku && ichiLines.filter((l) => l.val).map((l) => (
+        <path key={l.key} d={linePath(l.val, xAt, yAt)} fill="none" stroke={l.color} strokeWidth={1.4} strokeDasharray={l.dash} opacity={0.85} />
+      ))}
+      {show.fib && fib && fib.levels.map((lv, i) => {
+        const y = yAt(lv.price);
+        return (
+          <g key={i}>
+            <line x1={PLOT_LEFT} y1={y} x2={VB_W - PLOT_RIGHT} y2={y} stroke="rgba(224,164,88,0.55)" strokeWidth={1} strokeDasharray="5 4" />
+            <text x={VB_W - PLOT_RIGHT - 4} y={y - 2} fontSize="12" textAnchor="end" fill="rgba(224,164,88,0.9)">
+              {(lv.ratio * 100).toFixed(1)}%
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -78,7 +113,7 @@ const MA_LEGEND = [
 
 export default function TechnicalTab({ ticker }) {
   const [interval, setIntervalId] = useState("1m");
-  const [show, setShow] = useState({ ma: true, vwap: true, bb: false });
+  const [show, setShow] = useState({ ma: true, vwap: true, bb: false, ichimoku: false, fib: false });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -118,13 +153,15 @@ export default function TechnicalTab({ ticker }) {
             <ToggleChip label="이평선" active={show.ma} color="#8fb0d9" onClick={() => setShow((s) => ({ ...s, ma: !s.ma }))} />
             <ToggleChip label="VWAP" active={show.vwap} color="var(--accent)" onClick={() => setShow((s) => ({ ...s, vwap: !s.vwap }))} />
             <ToggleChip label="볼린저" active={show.bb} color="rgba(139,152,165,0.9)" onClick={() => setShow((s) => ({ ...s, bb: !s.bb }))} />
+            <ToggleChip label="이치모쿠" active={show.ichimoku} color="#5a8fd9" onClick={() => setShow((s) => ({ ...s, ichimoku: !s.ichimoku }))} />
+            <ToggleChip label="피보나치" active={show.fib} color="#e0a458" onClick={() => setShow((s) => ({ ...s, fib: !s.fib }))} />
           </div>
           <SegmentedControl items={TIMEFRAMES} activeId={interval} onChange={setIntervalId} />
         </div>
 
         <div style={{ position: "relative" }}>
           {CandleChart && <CandleChart candles={data.candles} showVolume showVwap={show.vwap} height={CHART_H} />}
-          {show.ma || show.bb ? <OverlayLayer candles={data.candles} overlays={data.overlays} show={show} /> : null}
+          {show.ma || show.bb || show.ichimoku || show.fib ? <OverlayLayer candles={data.candles} overlays={data.overlays} show={show} /> : null}
         </div>
 
         {/* 오버레이 범례 */}

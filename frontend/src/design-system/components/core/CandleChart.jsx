@@ -76,7 +76,7 @@ export function CandleChart({
             return (
               <g key={i}>
                 <line x1={plotLeft} y1={y} x2={vbW - plotRight} y2={y} stroke="var(--border-default)" strokeWidth="1" opacity="0.5" />
-                <text x={plotLeft - 8} y={y + 3} fontSize="18" textAnchor="end" fill="var(--text-tertiary)" fontFamily="var(--font-numeric)">
+                <text x={plotLeft - 4} y={y + 3} fontSize="12" textAnchor="end" fill="var(--text-tertiary)" fontFamily="var(--font-numeric)">
                   {Math.round(price).toLocaleString("ko-KR")}
                 </text>
               </g>

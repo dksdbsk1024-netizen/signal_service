@@ -72,6 +72,16 @@ def score_flow(smart_money: float, program: float) -> float:
     return clamp(smart_money + 0.5 * program)
 
 
+def score_obv(divergence: float) -> float:
+    """OBV 다이버전스(−1~+1 근사) → 점수. 상승 다이버전스=+, 하락=−."""
+    return clamp(divergence * 100)
+
+
+def score_atr_band(pos: float) -> float:
+    """ATR밴드 위치 0~1. 상단(1)=+100, 하단(0)=−100, 중앙(0.5)=0. score_pct_b 동형."""
+    return clamp((pos - 0.5) * 200)
+
+
 # ── 카테고리 집계 ──────────────────────────────────────────────
 def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float, dict]]:
     """카테고리별 (점수, 세부 지표 점수 dict). 세부는 UI 드릴다운·검증용."""
@@ -92,22 +102,30 @@ def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float, dict]]:
     }
     volatility_detail = {
         "pct_b": score_pct_b(ind.volatility.get("pct_b", 0.5)),
+        "atr_band": score_atr_band(ind.volatility.get("atr_band", 0.5)),
     }
     flow_detail = {
         "smart_money": score_flow(
             ind.flow.get("smart_money", 0.0), ind.flow.get("program", 0.0)
         ),
+        "obv": score_obv(ind.flow.get("obv", 0.0)),
     }
 
-    def avg(d: dict) -> float:
-        return clamp(sum(d.values()) / len(d)) if d else 0.0
+    def weighted(detail: dict, cat: str) -> float:
+        """세부지표 점수를 config.INDICATOR_WEIGHTS로 가중평균(카테고리 내 합=1 재정규화).
+
+        가중치 미지정 지표는 1.0. 전부 1.0이면 단순평균과 동일.
+        """
+        w = config.INDICATOR_WEIGHTS.get(cat, {})
+        total_w = sum(w.get(k, 1.0) for k in detail) or 1.0
+        return clamp(sum(detail[k] * w.get(k, 1.0) for k in detail) / total_w)
 
     return {
-        "trend": (avg(trend_detail), trend_detail),
-        "momentum": (avg(momentum_detail), momentum_detail),
-        "volume": (avg(volume_detail), volume_detail),
-        "volatility": (avg(volatility_detail), volatility_detail),
-        "flow": (avg(flow_detail), flow_detail),
+        "trend": (weighted(trend_detail, "trend"), trend_detail),
+        "momentum": (weighted(momentum_detail, "momentum"), momentum_detail),
+        "volume": (weighted(volume_detail, "volume"), volume_detail),
+        "volatility": (weighted(volatility_detail, "volatility"), volatility_detail),
+        "flow": (weighted(flow_detail, "flow"), flow_detail),
     }
 
 

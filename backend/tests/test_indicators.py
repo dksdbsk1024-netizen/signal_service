@@ -84,3 +84,88 @@ def test_compute_indicators_shape():
     assert result.last_close > 0
     assert result.last_atr > 0
     assert result.flow["smart_money"] == 15  # 10 + 5
+    # 신규: OBV 다이버전스는 flow, ATR밴드 위치는 volatility에 원시값으로
+    assert "obv" in result.flow
+    assert "atr_band" in result.volatility
+    assert 0.0 <= result.volatility["atr_band"] <= 1.0
+
+
+def test_obv_monotonic_up_on_rising_close():
+    close = pd.Series([10, 11, 12, 13, 14], dtype=float)
+    volume = pd.Series([100, 100, 100, 100, 100], dtype=float)
+    o = ind.obv(close, volume)
+    # 첫 봉(diff NaN→0)=0, 이후 매봉 +100 누적
+    assert o.iloc[-1] == 400.0
+
+
+def test_obv_divergence_bullish_when_price_down_obv_up():
+    # 가격은 하락 마감(92<100)이나 상승봉 거래량이 압도 → OBV 상승 = 상승 다이버전스(+)
+    close = pd.Series([100, 90, 95, 85, 92], dtype=float)
+    volume = pd.Series([100, 100, 1000, 100, 1000], dtype=float)
+    div = ind.obv_divergence(close, volume, lookback=4)
+    assert div > 0
+
+
+def test_obv_divergence_zero_when_flat():
+    close = pd.Series([100, 100, 100, 100, 100], dtype=float)
+    volume = pd.Series([100, 100, 100, 100, 100], dtype=float)
+    assert ind.obv_divergence(close, volume, lookback=4) == 0.0
+
+
+def test_atr_band_position_mid_is_half():
+    # 갭 없이 등락 폭 일정 → 종가가 SMA(중심) 근처면 위치 ≈ 0.5
+    n = 40
+    close = pd.Series(np.full(n, 100.0))
+    high = close + 5
+    low = close - 5
+    pos = ind.atr_band_position(high, low, close, period=20, mult=2.0)
+    assert abs(pos - 0.5) < 0.05
+
+
+def test_atr_band_upper_above_lower():
+    n = 40
+    rng = np.random.default_rng(3)
+    close = pd.Series(100 + np.cumsum(rng.normal(0, 1, n)))
+    high = close + 2
+    low = close - 2
+    upper, mid, lower = ind.atr_band(high, low, close, period=20, mult=2.0)
+    assert upper.iloc[-1] > mid.iloc[-1] > lower.iloc[-1]
+
+
+def test_ichimoku_tenkan_above_kijun_on_uptrend():
+    close = pd.Series(np.linspace(100, 300, 120))
+    high = close + 1
+    low = close - 1
+    tenkan, kijun, senkou_a, senkou_b, chikou = ind.ichimoku(high, low, close)
+    # 상승장: 단기(전환선) > 중기(기준선)
+    assert tenkan.iloc[-1] > kijun.iloc[-1]
+    # 선행스팬은 +26 전위 → 앞쪽 26개는 NaN
+    assert senkou_a.iloc[:26].isna().all()
+    # 후행스팬은 −26 전위 → 마지막 26개 NaN
+    assert chikou.iloc[-26:].isna().all()
+    assert len(tenkan) == len(close)
+
+
+def test_fibonacci_uptrend_levels():
+    # 저점(인덱스0) 이후 고점(인덱스 끝) → 상승 스윙
+    low = pd.Series([100, 105, 110, 120, 130], dtype=float)
+    high = pd.Series([102, 107, 112, 122, 132], dtype=float)
+    fib = ind.fibonacci_levels(high, low)
+    assert fib["direction"] == "up"
+    assert fib["swing_high"] == 132.0
+    assert fib["swing_low"] == 100.0
+    by_ratio = {lv["ratio"]: lv["price"] for lv in fib["levels"]}
+    assert by_ratio[0.0] == 132.0    # 0% = 고점
+    assert by_ratio[1.0] == 100.0    # 100% = 저점
+    assert by_ratio[0.5] == 116.0    # 중간
+
+
+def test_fibonacci_downtrend_direction():
+    # 고점(인덱스0) 이후 저점(인덱스 끝) → 하락 스윙
+    high = pd.Series([132, 128, 120, 110, 102], dtype=float)
+    low = pd.Series([130, 126, 118, 108, 100], dtype=float)
+    fib = ind.fibonacci_levels(high, low)
+    assert fib["direction"] == "down"
+    by_ratio = {lv["ratio"]: lv["price"] for lv in fib["levels"]}
+    assert by_ratio[0.0] == 100.0    # 하락: 0% = 저점
+    assert by_ratio[1.0] == 132.0    # 100% = 고점
