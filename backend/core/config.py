@@ -56,6 +56,20 @@ BB_PERIOD, BB_STD = 20, 2.0
 ATR_PERIOD = 14
 MA_PERIODS: list[int] = [5, 20, 60]
 VOL_LOOKBACK = 20  # 거래량 급증 판정 기준 이동평균 기간
+OBV_LOOKBACK = 20  # OBV 다이버전스 판정 창
+ATR_BAND_MULT = 2.0  # ATR밴드 폭 배수 (중심 SMA ± mult×ATR)
+
+# ── 카테고리 내부 세부지표 가중치 ──────────────────────────────
+# 각 카테고리 점수 = 세부지표 점수의 가중평균(사용 시 카테고리 내 합=1로 재정규화).
+# 전부 1.0 = 단순평균과 동일 → 미변경 카테고리(trend/momentum/volume) 결과 불변.
+# 카테고리 총가중(DEFAULT_WEIGHTS)은 그대로이므로 전체 합 100 유지.
+INDICATOR_WEIGHTS: dict[str, dict[str, float]] = {
+    "trend": {"ma_alignment": 1.0, "price_vs_vwap": 1.0},
+    "momentum": {"rsi": 1.0, "macd_hist": 1.0, "stoch": 1.0},
+    "volume": {"surge": 1.0},
+    "volatility": {"pct_b": 1.0, "atr_band": 1.0},
+    "flow": {"smart_money": 1.0, "obv": 1.0},
+}
 
 # ── 리스크 계산 (탭1 매매계획) ──────────────────────────────────
 # ATR 배수 — 손절/목표 후보. 손절은 1×ATR, 목표는 1.5×/2× 등으로 조합해 R:R 산출.
