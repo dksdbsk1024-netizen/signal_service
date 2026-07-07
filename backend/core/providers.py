@@ -188,11 +188,9 @@ class MockProvider(StockProvider, MacroProvider):
         }
 
     def get_release_calendar(self) -> list[dict]:
-        return [
-            {"name": "미국 CPI", "date": "2026-07-14", "d_day": 8},
-            {"name": "FOMC", "date": "2026-07-29", "d_day": 23},
-            {"name": "한국 금통위", "date": "2026-07-17", "d_day": 11},
-        ]
+        # 발표 캘린더 = 확정 상수 + 규칙 추정(core.calendar). d_day 는 오늘 기준 실시간.
+        from .calendar import get_calendar  # 지연 import
+        return get_calendar()
 
     def get_index(self, name: str) -> dict:
         rng = np.random.default_rng(abs(hash(name)) % (2**32) + 7)
@@ -236,29 +234,41 @@ class KISProvider(StockProvider):
 
 
 class MacroDataProvider(MacroProvider):
-    """경제지표 = FRED 실데이터(core.macro). 시세·발표일정은 아직 Mock 위임.
+    """경제지표 = 실데이터(미국 FRED · 한국 ECOS, core.macro). 시세 = yfinance 실데이터.
+    발표 캘린더 = core.calendar(확정 상수 + 규칙 추정, 오늘 기준 D-day).
 
-    FRED_API_KEY 가 있을 때만 이 provider 를 쓴다(없으면 deps 가 MockProvider 로 폴백).
-    개별 지표 fetch 실패 시 core.macro 가 지표 단위로 Mock 폴백하므로 앱은 안 죽는다.
+    각 소스 키(fred_key/ecos_key)가 있을 때만 해당 지표를 실데이터로 받는다. 키가
+    없거나 개별 지표 fetch 실패 시 core.macro 가 지표 단위로 Mock 폴백하므로 앱은 안 죽는다.
+    시세(지수·환율·VIX)는 키 불필요 — core.quotes 가 캐시·재시도·stale 폴백을 처리한다.
+    `live_quotes=False` 면 시세도 Mock(오프라인 테스트·결정성용).
     """
 
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self._mock = MockProvider()  # 시세(지수·환율·VIX)·발표일정은 Mock 유지
+    def __init__(self, fred_key: str | None, ecos_key: str | None = None,
+                 live_quotes: bool = True):
+        self.fred_key = fred_key
+        self.ecos_key = ecos_key
+        self.live_quotes = live_quotes
+        self._mock = MockProvider()  # 발표일정은 Mock 유지
 
     def get_economic_indicator(self, name: str) -> dict:
         from . import macro  # 지연 import (requests 의존)
-        return macro.build_indicator(name, self.api_key)
+        return macro.build_indicator(name, fred_key=self.fred_key, ecos_key=self.ecos_key)
 
     def get_release_calendar(self) -> list[dict]:
-        # 경제캘린더 별도 소스 필요 → 당분간 Mock(placeholder)
-        return self._mock.get_release_calendar()
+        # 확정 상수 + 규칙 추정(core.calendar). 오늘 기준 D-day 실시간 계산.
+        from .calendar import get_calendar  # 지연 import
+        return get_calendar()
+
+    def _quote(self, name: str) -> dict:
+        from . import quotes  # 지연 import (yfinance 의존)
+        return quotes.build_quote(name) if self.live_quotes else quotes.mock_quote(name)
 
     def get_index(self, name: str) -> dict:
-        return self._mock.get_index(name)
+        return self._quote(name)
 
     def get_fx(self, pair: str) -> dict:
-        return self._mock.get_fx(pair)
+        from . import quotes
+        return self._quote(quotes.FX_NAME)
 
     def get_volatility(self) -> dict:
-        return self._mock.get_volatility()
+        return self._quote("VIX")

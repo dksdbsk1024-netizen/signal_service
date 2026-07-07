@@ -20,11 +20,14 @@ load_dotenv()
 # 종목 데이터: 개발/UI 테스트용 결정적 합성. 실연동 시 KISProvider 로 교체.
 PROVIDER = MockProvider()
 
-# 매크로: 항상 MacroDataProvider. 키가 없으면 core.macro 가 지표를 Mock(region 포함)으로
-# 폴백하므로 키 없이도 UI 스키마가 동일하게 동작한다.
+# 매크로: 항상 MacroDataProvider. 미국=FRED, 한국=ECOS(한국은행). 각 소스 키가 없으면
+# core.macro 가 지표를 Mock(region 포함)으로 폴백하므로 키 없이도 UI 스키마가 동일하다.
+# 지표 카드마다 source("fred"|"ecos"|"mock")를 실어 프론트가 소스를 구분 표시한다.
 _FRED_KEY = os.getenv("FRED_API_KEY")
-MACRO_PROVIDER = MacroDataProvider(_FRED_KEY)
-MACRO_SOURCE = "fred" if _FRED_KEY else "mock"
+_ECOS_KEY = os.getenv("ECOS_API_KEY")
+MACRO_PROVIDER = MacroDataProvider(_FRED_KEY, _ECOS_KEY)
+# 상단 배지용 종합 상태: 실데이터 키가 하나라도 있으면 "live", 없으면 "mock".
+MACRO_SOURCE = "live" if (_FRED_KEY or _ECOS_KEY) else "mock"
 
 
 def get_provider() -> MockProvider:

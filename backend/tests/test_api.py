@@ -6,9 +6,9 @@ from backend.api.main import app
 from backend.api.deps import get_macro_provider
 from backend.core.providers import MacroDataProvider
 
-# /macro 테스트는 네트워크(FRED) 대신 키 없는 MacroDataProvider 로 강제 →
-# core.macro 가 전부 Mock(region 포함) 폴백 → CI 안정, 스키마 동일.
-app.dependency_overrides[get_macro_provider] = lambda: MacroDataProvider(None)
+# /macro 테스트는 네트워크(FRED·yfinance) 대신 키 없는 + live_quotes=False 로 강제 →
+# 경제지표는 core.macro Mock, 시세는 core.quotes Mock 폴백 → CI 안정·오프라인, 스키마 동일.
+app.dependency_overrides[get_macro_provider] = lambda: MacroDataProvider(None, live_quotes=False)
 
 client = TestClient(app)
 TICKER = "005930"
@@ -80,14 +80,23 @@ def test_macro_schema():
     r = client.get("/api/macro")
     assert r.status_code == 200
     body = r.json()
-    assert body["source"] in {"fred", "mock"}
+    assert body["source"] in {"live", "mock"}
     names = {c["name"] for c in body["indicators"]}
-    assert {"미국 CPI", "미국 PPI", "미국 기준금리", "미국채 10년", "한국 CPI"} <= names
+    assert {"미국 CPI", "미국 PPI", "미국 기준금리", "미국채 10년", "한국 CPI", "한국 기준금리"} <= names
     for c in body["indicators"]:
-        # 스키마 유지: 실데이터/Mock 무관 동일 키
-        assert {"actual", "forecast", "previous", "surprise", "as_of", "region"} <= set(c)
+        # 스키마 유지: 실데이터/Mock 무관 동일 키 (source 로 FRED/ECOS/Mock 구분)
+        assert {"actual", "forecast", "previous", "surprise", "as_of", "region", "source"} <= set(c)
         assert c["region"] in {"US", "KR"}
-    assert body["quotes"]["volatility"]["name"] == "VIX"
+        assert c["source"] in {"fred", "ecos", "mock"}
+    # 시세(섹션 B): yfinance 실데이터/Mock 무관 동일 스키마 (source·as_of·mock·stale)
+    quotes = body["quotes"]
+    assert quotes["source"] in {"yfinance", "mock"}
+    assert quotes["volatility"]["name"] == "VIX"
+    assert len(quotes["indices"]) == 4
+    for q in [*quotes["indices"], quotes["fx"], quotes["volatility"]]:
+        assert {"name", "value", "change_pct", "as_of", "source", "mock", "stale"} <= set(q)
+        assert q["source"] in {"yfinance", "mock"}
+    assert quotes["fx"]["pair"] == "USD/KRW"
     assert len(body["calendar"]) >= 1
 
 
