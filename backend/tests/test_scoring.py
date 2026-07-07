@@ -39,8 +39,8 @@ def _bullish_indicators() -> IndicatorSet:
         trend={"ma_alignment": 1.0, "price_vs_vwap": 5.0},
         momentum={"rsi": 75, "macd_hist": 10.0, "stoch_k": 90, "stoch_d": 85},
         volume={"surge": 3.0},
-        volatility={"pct_b": 1.0},
-        flow={"smart_money": 100.0, "program": 50.0},
+        volatility={"pct_b": 1.0, "atr_band": 1.0},
+        flow={"smart_money": 100.0, "program": 50.0, "obv": 1.0},
         last_close=10000.0,
         last_atr=150.0,
     )
@@ -58,8 +58,8 @@ def test_bearish_symmetry():
         trend={"ma_alignment": -1.0, "price_vs_vwap": -5.0},
         momentum={"rsi": 25, "macd_hist": -10.0, "stoch_k": 10, "stoch_d": 15},
         volume={"surge": 3.0},
-        volatility={"pct_b": 0.0},
-        flow={"smart_money": -100.0, "program": -50.0},
+        volatility={"pct_b": 0.0, "atr_band": 0.0},
+        flow={"smart_money": -100.0, "program": -50.0, "obv": -1.0},
         last_close=10000.0,
         last_atr=150.0,
     )
@@ -117,3 +117,32 @@ def test_neutral_indicators_near_zero():
     result = scoring.score_stock(ind)
     assert result.final_score == 0.0
     assert result.label == "중립"
+
+
+def test_category_weights_sum_100():
+    assert sum(config.DEFAULT_WEIGHTS.values()) == 100
+
+
+def test_indicator_weights_cover_all_categories():
+    assert set(config.INDICATOR_WEIGHTS) == set(config.CATEGORIES)
+    assert "obv" in config.INDICATOR_WEIGHTS["flow"]
+    assert "atr_band" in config.INDICATOR_WEIGHTS["volatility"]
+
+
+def test_score_obv_sign():
+    assert scoring.score_obv(1.0) > 0
+    assert scoring.score_obv(-1.0) < 0
+    assert scoring.score_obv(0.0) == 0.0
+
+
+def test_score_atr_band_bounds():
+    assert scoring.score_atr_band(1.0) == 100.0
+    assert scoring.score_atr_band(0.0) == -100.0
+    assert scoring.score_atr_band(0.5) == 0.0
+
+
+def test_new_indicators_in_contribution_detail():
+    result = scoring.score_stock(_bullish_indicators())
+    by_cat = {c.category: c for c in result.contributions}
+    assert "obv" in by_cat["flow"].detail
+    assert "atr_band" in by_cat["volatility"].detail
