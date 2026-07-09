@@ -17,6 +17,10 @@ function fmtSigned(v) {
 function fmtEok(v) {
   return fmtSigned(v) + "억";
 }
+// 거래원 수량은 주 단위로 오지만 백만 단위라 그대로 쓰면 표가 숫자로 뒤덮인다.
+function fmtMan(qty) {
+  return (qty / 1e4).toFixed(1) + "만";
+}
 
 // ── 외국인·기관 순매수 추이 (일별 그룹 막대 / 누적 라인) ──
 function NetBuyTrendChart({ data, mode, height = 200, vbWidth = 760 }) {
@@ -163,29 +167,49 @@ function OrderBook({ book, currentPrice, changePct }) {
   );
 }
 
-function BrokerTable({ brokers }) {
-  const [sortKey, setSortKey] = useState("net");
-  const cols = [
-    { key: "rank", label: "순위" }, { key: "name", label: "창구" },
-    { key: "buy", label: "매수" }, { key: "sell", label: "매도" }, { key: "net", label: "순매수" },
-  ];
-  const sorted = brokers.slice().sort((a, b) => sortKey === "buy" ? b.buy - a.buy : sortKey === "sell" ? b.sell - a.sell : Math.abs(b.net) - Math.abs(a.net));
+// 창구 상위는 매도·매수가 서로 다른 집합이라 한 창구의 순매수를 낼 수 없다(KIS 가 각각 상위 5만 준다).
+// 그래서 HTS 관습대로 두 리스트를 나란히 놓는다. 창구 수는 종목마다 5개 미만일 수 있다.
+function BrokerSide({ title, rows, color }) {
+  const cell = { padding: "var(--space-2) var(--space-1)", borderBottom: "1px solid var(--border-default)" };
+  const th = { ...cell, fontSize: "var(--text-2xs)", color: "var(--text-tertiary)", fontWeight: 600, whiteSpace: "nowrap" };
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-xs)" }}>
-      <thead><tr>{cols.map((c) => (
-        <th key={c.key} onClick={() => c.key !== "rank" && c.key !== "name" && setSortKey(c.key)}
-          style={{ textAlign: c.key === "buy" || c.key === "sell" || c.key === "net" ? "right" : "left", fontSize: "var(--text-2xs)", color: sortKey === c.key ? "var(--accent-strong)" : "var(--text-tertiary)", fontWeight: 600, padding: "var(--space-2)", borderBottom: "1px solid var(--border-default)", whiteSpace: "nowrap", cursor: c.key === "rank" || c.key === "name" ? "default" : "pointer" }}>{c.label}</th>
-      ))}</tr></thead>
-      <tbody>{sorted.map((b, i) => (
+      <thead><tr>
+        <th style={{ ...th, textAlign: "left" }} colSpan={2}>{title}</th>
+        <th style={{ ...th, textAlign: "right" }}>수량</th>
+        <th style={{ ...th, textAlign: "right" }}>비중</th>
+      </tr></thead>
+      <tbody>{rows.map((b) => (
         <tr key={b.name}>
-          <td style={{ padding: "var(--space-2)", color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-default)" }}>{i + 1}</td>
-          <td style={{ padding: "var(--space-2)", color: "var(--text-primary)", fontWeight: 500, borderBottom: "1px solid var(--border-default)", whiteSpace: "nowrap" }}>{b.name}</td>
-          <td className="ds-numeric" style={{ padding: "var(--space-2)", textAlign: "right", color: "var(--signal-buy)", borderBottom: "1px solid var(--border-default)" }}>{b.buy.toLocaleString("ko-KR")}</td>
-          <td className="ds-numeric" style={{ padding: "var(--space-2)", textAlign: "right", color: "var(--signal-sell)", borderBottom: "1px solid var(--border-default)" }}>{b.sell.toLocaleString("ko-KR")}</td>
-          <td className="ds-numeric" style={{ padding: "var(--space-2)", textAlign: "right", fontWeight: 700, color: b.net >= 0 ? "var(--signal-buy)" : "var(--signal-sell)", borderBottom: "1px solid var(--border-default)" }}>{fmtSigned(b.net)}</td>
+          <td style={{ ...cell, color: "var(--text-tertiary)", width: "1.5em" }}>{b.rank}</td>
+          <td style={{ ...cell, color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap" }}>
+            {b.name}{b.foreign && <span title="외국계" style={{ marginLeft: 4, color: "var(--text-tertiary)" }}>🌐</span>}
+          </td>
+          <td className="ds-numeric" style={{ ...cell, textAlign: "right", color }}>{fmtMan(b.qty)}</td>
+          <td className="ds-numeric" style={{ ...cell, textAlign: "right", color: "var(--text-tertiary)" }}>{b.pct.toFixed(1)}%</td>
         </tr>
       ))}</tbody>
     </table>
+  );
+}
+
+function BrokerTable({ brokers }) {
+  const { sellers, buyers, foreign } = brokers;
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+        <BrokerSide title="매도 상위" rows={sellers} color="var(--signal-sell)" />
+        <BrokerSide title="매수 상위" rows={buyers} color="var(--signal-buy)" />
+      </div>
+      {/* 외국계 집계는 상위 5 밖 창구까지 합산한 값 — 위 표의 🌐 합계보다 크다. */}
+      <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
+        외국계 순매수{" "}
+        <span className="ds-numeric" style={{ fontWeight: 700, color: foreign.net_qty >= 0 ? "var(--signal-buy)" : "var(--signal-sell)" }}>
+          {fmtSigned(foreign.net_qty / 1e4)}만주
+        </span>
+        {" "}(매도 {fmtMan(foreign.sell_qty)} {foreign.sell_pct.toFixed(1)}% / 매수 {fmtMan(foreign.buy_qty)} {foreign.buy_pct.toFixed(1)}%)
+      </div>
+    </div>
   );
 }
 
