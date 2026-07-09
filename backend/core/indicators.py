@@ -256,20 +256,38 @@ def fibonacci_levels(
 
 
 # ── 수급 ───────────────────────────────────────────────────────
-def flow_metrics(investor_flow: dict) -> dict[str, float]:
+def turnover(ohlcv: pd.DataFrame) -> float:
+    """조회 구간 누적 거래대금(억원). 종가×거래량의 합.
+
+    수급 순매수의 분모다. 시가총액을 쓰려면 상장주식수가 필요한데 provider
+    인터페이스에 없어, 같은 구간에서 얻을 수 있는 거래대금을 규모 척도로 쓴다.
+    """
+    total = float((ohlcv["close"] * ohlcv["volume"]).sum())
+    return total / 1e8  # 원 → 억원
+
+
+def flow_metrics(investor_flow: dict, turnover_eok: float = 0.0) -> dict[str, float]:
     """투자자별 순매수 dict를 수급 지표로 정리.
 
     investor_flow: {"foreign": 억원, "institution": 억원, "program": 억원, "retail": 억원}
     (양수=순매수). 스마트머니(외국인+기관)와 프로그램을 별도로 유지해 scoring이 활용.
+
+    turnover_eok(억원)가 주어지면 거래대금 대비 비율도 함께 낸다 — scoring은 절대
+    금액이 아니라 이 비율을 쓴다(종목 크기 중립화). 거래대금이 0이면 비율 0(중립).
     """
     foreign = float(investor_flow.get("foreign", 0.0))
     institution = float(investor_flow.get("institution", 0.0))
     program = float(investor_flow.get("program", 0.0))
+    smart_money = foreign + institution
+    denom = turnover_eok if turnover_eok > 0 else 0.0
     return {
         "foreign": foreign,
         "institution": institution,
         "program": program,
-        "smart_money": foreign + institution,  # 외국인+기관 순매수 합
+        "smart_money": smart_money,  # 외국인+기관 순매수 합
+        "turnover": denom,
+        "smart_money_ratio": (smart_money / denom) if denom else 0.0,
+        "program_ratio": (program / denom) if denom else 0.0,
     }
 
 
@@ -319,7 +337,7 @@ def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -
         },
         volume={"surge": volume_surge(volume)},
         volatility={"pct_b": last(pct_b), "atr_band": atr_pos},
-        flow={**flow_metrics(investor_flow or {}), "obv": obv_div},
+        flow={**flow_metrics(investor_flow or {}, turnover(ohlcv)), "obv": obv_div},
         last_close=last(close),
         last_atr=last(atr_series),
     )

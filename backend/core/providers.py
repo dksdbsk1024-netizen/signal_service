@@ -141,11 +141,19 @@ class MockProvider(StockProvider, MacroProvider):
             index=idx,
         )
 
+    def _turnover(self, ticker: str) -> float:
+        """당일 누적 거래대금(억원). 순매수 규모를 여기에 비례시킨다."""
+        df = self.get_minute_ohlcv(ticker)
+        return float((df["close"] * df["volume"]).sum()) / 1e8
+
     def get_investor_flow(self, ticker: str) -> dict:
         rng = np.random.default_rng(_seed_for(ticker) + 1)
-        foreign = float(rng.normal(0, 50))
-        institution = float(rng.normal(0, 40))
-        program = float(rng.normal(0, 30))
+        # 순매수 = 거래대금 × 비율. 절대 억원으로 뽑으면 종목 크기와 무관한 값이 나와
+        # 실데이터(KIS)와 스케일이 3자릿수 어긋난다. scoring이 쓰는 비율의 분포를 맞춘다.
+        turnover = self._turnover(ticker)
+        foreign = float(rng.normal(0, 0.030)) * turnover
+        institution = float(rng.normal(0, 0.025)) * turnover
+        program = float(rng.normal(0, 0.035)) * turnover
         return {
             "foreign": round(foreign, 1),
             "institution": round(institution, 1),
@@ -176,11 +184,12 @@ class MockProvider(StockProvider, MacroProvider):
 
     def get_investor_flow_series(self, ticker: str, days: int = 20) -> dict:
         rng = np.random.default_rng(_seed_for(ticker) + 4)
-        # 종목별 약한 추세(bias)를 준 일별 순매수(억원).
-        f_bias, i_bias, p_bias = rng.normal(0, 8, 3)
-        foreign = [round(float(rng.normal(f_bias, 30)), 1) for _ in range(days)]
-        institution = [round(float(rng.normal(i_bias, 24)), 1) for _ in range(days)]
-        program = [round(float(rng.normal(p_bias, 18)), 1) for _ in range(days)]
+        # 일별 순매수(억원)도 거래대금 비례 — 스냅샷(get_investor_flow)과 자릿수를 맞춘다.
+        turnover = self._turnover(ticker)
+        f_bias, i_bias, p_bias = rng.normal(0, 0.006, 3)
+        foreign = [round(float(rng.normal(f_bias, 0.020)) * turnover, 1) for _ in range(days)]
+        institution = [round(float(rng.normal(i_bias, 0.016)) * turnover, 1) for _ in range(days)]
+        program = [round(float(rng.normal(p_bias, 0.012)) * turnover, 1) for _ in range(days)]
         dates = [f"{(d % 12) + 1:02d}/{(d % 28) + 1:02d}" for d in range(days)]
         return {
             "dates": dates,

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from backend.core import indicators as ind
 
@@ -84,6 +85,10 @@ def test_compute_indicators_shape():
     assert result.last_close > 0
     assert result.last_atr > 0
     assert result.flow["smart_money"] == 15  # 10 + 5
+    # 수급 비율 = 순매수 / 당일 거래대금(억원)
+    assert result.flow["turnover"] == pytest.approx(ind.turnover(df))
+    assert result.flow["smart_money_ratio"] == pytest.approx(15 / result.flow["turnover"])
+    assert result.flow["program_ratio"] == pytest.approx(-3 / result.flow["turnover"])
     # 신규: OBV 다이버전스는 flow, ATR밴드 위치는 volatility에 원시값으로
     assert "obv" in result.flow
     assert "atr_band" in result.volatility
@@ -169,3 +174,11 @@ def test_fibonacci_downtrend_direction():
     by_ratio = {lv["ratio"]: lv["price"] for lv in fib["levels"]}
     assert by_ratio[0.0] == 100.0    # 하락: 0% = 저점
     assert by_ratio[1.0] == 132.0    # 100% = 고점
+
+
+def test_flow_metrics_zero_turnover_is_neutral():
+    """거래대금 0(휴장·빈 봉)이면 비율은 0 — ZeroDivision 대신 중립."""
+    m = ind.flow_metrics({"foreign": 100, "institution": 50, "program": 20}, 0.0)
+    assert m["smart_money_ratio"] == 0.0
+    assert m["program_ratio"] == 0.0
+    assert m["smart_money"] == 150  # 원시 금액은 그대로 보존

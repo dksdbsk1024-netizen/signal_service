@@ -67,9 +67,27 @@ def score_volume(surge: float, direction_sign: float) -> float:
     return clamp(strength * direction_sign)
 
 
-def score_flow(smart_money: float, program: float) -> float:
-    """수급: 외국인+기관 순매수(억원)에 프로그램을 절반 가중. 점수≈억원."""
-    return clamp(smart_money + 0.5 * program)
+def soft_saturate(x: float, half: float) -> float:
+    """포화 없는 단조 압축. |x|=half 에서 ±50, x→±∞ 에서 ±100에 점근.
+
+    clamp와 달리 상한에 '붙지' 않아 극단값 사이의 순서(변별력)가 남는다.
+    """
+    if half <= 0:
+        raise ValueError("half must be positive")
+    return 100.0 * x / (abs(x) + half)
+
+
+def score_flow(smart_ratio: float, program_ratio: float) -> float:
+    """수급: 당일 거래대금 대비 순매수 비율 → 점수.
+
+    절대 금액(억원)을 쓰면 거래대금이 큰 종목일수록 무조건 상한이라 신호가 죽는다.
+    비율로 정규화해 종목 크기를 소거하고(삼성전자 vs 소형주 공정 비교),
+    soft_saturate로 압축해 ±100에 도달하지 않게 한다.
+    """
+    smart = soft_saturate(smart_ratio, config.FLOW_HALF_RATIO)
+    prog = soft_saturate(program_ratio, config.FLOW_HALF_RATIO)
+    w = config.FLOW_PROGRAM_WEIGHT
+    return clamp((smart + w * prog) / (1 + w))
 
 
 def score_obv(divergence: float) -> float:
@@ -106,7 +124,7 @@ def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float, dict]]:
     }
     flow_detail = {
         "smart_money": score_flow(
-            ind.flow.get("smart_money", 0.0), ind.flow.get("program", 0.0)
+            ind.flow.get("smart_money_ratio", 0.0), ind.flow.get("program_ratio", 0.0)
         ),
         "obv": score_obv(ind.flow.get("obv", 0.0)),
     }
