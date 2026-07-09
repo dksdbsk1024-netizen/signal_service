@@ -1,7 +1,6 @@
 """라우트 공용 의존성 — provider 주입 + 지표 로딩 헬퍼.
 
 provider를 모듈 싱글턴으로 두어 라우트가 데이터 소스에 직접 의존하지 않게 한다.
-실 API 단계에서 PROVIDER만 KISProvider로 교체하면 라우트는 그대로 재사용된다.
 """
 
 from __future__ import annotations
@@ -14,16 +13,34 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ..core.indicators import IndicatorSet, compute_indicators
-from ..core.providers import MacroDataProvider, MockProvider
+from ..core.providers import KISProvider, MacroDataProvider, MockProvider, StockProvider
 
-# backend/.env 로드 (FRED_API_KEY 등). 이미 환경에 있으면 유지.
+# backend/.env 로드 (KIS·FRED 키 등). 이미 환경에 있으면 유지.
 # 인자 없는 load_dotenv() 는 보통 이 파일 기준으로 상위를 훑어 backend/.env 를 찾지만,
 # REPL·`python -c`·디버거(sys.gettrace)·frozen 에서는 cwd 기준으로 바뀐다. 리포 루트에는
 # .env 가 없어 그때 조용히 Mock 으로 떨어진다 → 경로를 파일 기준으로 고정한다.
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-# 종목 데이터: 개발/UI 테스트용 결정적 합성. 실연동 시 KISProvider 로 교체.
-PROVIDER = MockProvider()
+
+def _build_stock_provider() -> StockProvider:
+    """KIS 키가 있으면 실데이터, 없으면 Mock (FRED/ECOS 와 같은 규약).
+
+    STOCK_PROVIDER=mock 으로 키가 있어도 강제 Mock 이 된다 — pytest(conftest)와
+    오프라인 개발용. 키 없는 PC 에서도 앱이 뜨는 게 폴백의 목적이다.
+    """
+    if os.getenv("STOCK_PROVIDER", "auto").strip().lower() == "mock":
+        return MockProvider()
+    app_key = os.getenv("KIS_APP_KEY")
+    app_secret = os.getenv("KIS_APP_SECRET")
+    if not (app_key and app_secret):
+        return MockProvider()
+    # 체결강도·거래원은 TR 미연동 → KISProvider 내부에서 이 Mock 으로 위임된다.
+    return KISProvider(app_key, app_secret, os.getenv("KIS_ACCOUNT_NO", ""))
+
+
+PROVIDER: StockProvider = _build_stock_provider()
+# 상단 배지용: 종목 데이터가 실데이터인지. 개별 응답의 source/mock 플래그가 더 정확하다.
+STOCK_SOURCE = "live" if isinstance(PROVIDER, KISProvider) else "mock"
 
 # 매크로: 항상 MacroDataProvider. 미국=FRED, 한국=ECOS(한국은행). 각 소스 키가 없으면
 # core.macro 가 지표를 Mock(region 포함)으로 폴백하므로 키 없이도 UI 스키마가 동일하다.
@@ -31,14 +48,14 @@ PROVIDER = MockProvider()
 _FRED_KEY = os.getenv("FRED_API_KEY")
 _ECOS_KEY = os.getenv("ECOS_API_KEY")
 # 시세(yfinance)는 키가 없어도 네트워크를 탄다 → 키 비우기만으론 오프라인이 안 된다.
-# MACRO_LIVE_QUOTES=0 이 pytest·오프라인 개발용 노브다.
+# MACRO_LIVE_QUOTES=0 이 STOCK_PROVIDER=mock 과 같은 역할(pytest·오프라인 개발).
 _LIVE_QUOTES = os.getenv("MACRO_LIVE_QUOTES", "1").strip().lower() not in ("0", "false", "mock")
 MACRO_PROVIDER = MacroDataProvider(_FRED_KEY, _ECOS_KEY, live_quotes=_LIVE_QUOTES)
 # 상단 배지용 종합 상태: 실데이터 키가 하나라도 있으면 "live", 없으면 "mock".
 MACRO_SOURCE = "live" if (_FRED_KEY or _ECOS_KEY) else "mock"
 
 
-def get_provider() -> MockProvider:
+def get_provider() -> StockProvider:
     return PROVIDER
 
 

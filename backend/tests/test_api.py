@@ -11,6 +11,13 @@ client = TestClient(app)
 TICKER = "005930"
 
 
+def test_stock_provider_is_mock_under_pytest():
+    """conftest 의 STOCK_PROVIDER=mock 가 먹혔는지. 실패하면 테스트가 실 KIS 를 때린다."""
+    from backend.api import deps
+
+    assert deps.STOCK_SOURCE == "mock"
+
+
 def test_macro_provider_is_offline_under_pytest():
     """conftest 의 매크로 오프라인 강제. 실패하면 테스트가 실 FRED/ECOS/yfinance 를 때린다.
 
