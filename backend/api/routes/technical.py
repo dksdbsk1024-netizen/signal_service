@@ -97,6 +97,9 @@ def get_technical(
         {"name": "ATR(14)", "value": round(ind.last_atr, 1), "signal": "-"},
     ]
 
+    # 분봉 출처 배지 — provider 가 df.attrs 에 달아둔 플래그를 그대로 올린다.
+    # (다른 라우트의 dict 응답이 싣는 source/mock/stale 과 같은 규약)
+    attrs = ohlcv.attrs
     return {
         "ticker": ticker,
         "interval": interval,
@@ -104,4 +107,7 @@ def get_technical(
         "overlays": overlays,
         "indicators_table": table,
         "params": {"ma": config.MA_PERIODS, "rsi": config.RSI_PERIOD},
+        "source": attrs.get("source", "mock"),
+        "mock": bool(attrs.get("mock", True)),
+        "stale": bool(attrs.get("stale", False)),
     }

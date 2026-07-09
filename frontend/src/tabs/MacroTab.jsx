@@ -1,7 +1,7 @@
 // 탭4 — 매크로. /api/macro 연결 (경제지표 = FRED/ECOS 실데이터, 시세 = yfinance 실데이터).
 // 섹션 A 경제지표 카드(실제/예상/이전 + 서프라이즈, 한/미 구분) · 섹션 B 시세(지수·환율·VIX). (macro-tab UI 킷 패턴)
 import React, { useEffect, useMemo, useState } from "react";
-import { API, SectionEyebrow, Card, SectionLabel, SegmentedControl, Banner } from "../ui.jsx";
+import { API, SectionEyebrow, Card, SectionLabel, SegmentedControl, Banner, SourceTag, AsOfBadge } from "../ui.jsx";
 
 const REGION_FILTERS = [
   { id: "all", label: "전체" },
@@ -13,29 +13,6 @@ function CountryTag({ code }) {
   return (
     <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--text-tertiary)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-xs)", padding: "1px 5px" }}>
       {code === "US" ? "🇺🇸 미국" : "🇰🇷 한국"}
-    </span>
-  );
-}
-
-// 실데이터 출처 태그 — 경제지표 FRED/ECOS, 시세 yfinance. mock 은 태그 없음(Mock 배지로 표시).
-const SOURCE_LABEL = { fred: "FRED", ecos: "ECOS", yfinance: "yfinance" };
-function SourceTag({ source }) {
-  const label = SOURCE_LABEL[source];
-  if (!label) return null;
-  return (
-    <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.02em", color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-xs)", padding: "0 4px" }}>
-      {label}
-    </span>
-  );
-}
-
-// mock=가짜값 · stale=실데이터지만 갱신 지연(직전 캐시). 둘 다 주의색(골드)으로 구분.
-function AsOfBadge({ children, mock, stale }) {
-  const warn = mock || stale;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "var(--text-2xs)", color: warn ? "var(--accent-strong)" : "var(--text-tertiary)", fontWeight: 600 }}>
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: warn ? "var(--accent-strong)" : "var(--status-closed)" }} />
-      {children}
     </span>
   );
 }

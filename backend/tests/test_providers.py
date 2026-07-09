@@ -18,6 +18,14 @@ def test_ohlcv_columns_and_shape():
     assert (df["close"] > 0).all()
 
 
+def test_ohlcv_tagged_as_mock():
+    """KISProvider 와 같은 attrs 규약 — 라우트가 소스 구분 없이 배지를 만들 수 있어야 한다."""
+    df = MockProvider().get_minute_ohlcv("005930")
+    assert (df.attrs["source"], df.attrs["mock"], df.attrs["stale"]) == ("mock", True, False)
+    # .tail() 을 지나도 살아남아야 한다(라우트가 bars 로 자른다).
+    assert df.tail(10).attrs["mock"] is True
+
+
 def test_deterministic_same_ticker():
     a = MockProvider().get_minute_ohlcv("035420")
     b = MockProvider().get_minute_ohlcv("035420")

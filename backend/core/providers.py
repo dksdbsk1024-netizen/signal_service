@@ -136,10 +136,14 @@ class MockProvider(StockProvider, MacroProvider):
         if rng.random() < 0.5:
             volume[-1] *= rng.uniform(1.5, 4.0)
         idx = pd.date_range(end=pd.Timestamp("2026-07-06 15:30"), periods=n, freq="1min")
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
             index=idx,
         )
+        # KISProvider(core.kis._tagged)와 같은 attrs 규약 — 라우트가 소스를 구분하지 않고
+        # 배지 플래그를 읽을 수 있게 한다. Mock 은 언제나 가짜값이고 캐시가 없다.
+        df.attrs.update({"source": "mock", "mock": True, "stale": False})
+        return df
 
     def _turnover(self, ticker: str) -> float:
         """당일 누적 거래대금(억원). 순매수 규모를 여기에 비례시킨다."""

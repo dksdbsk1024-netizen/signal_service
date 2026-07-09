@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   API, Ds, NAME_BY_TICKER, SectionEyebrow, Card, SectionLabel,
-  SegmentedControl, ToggleChip, Banner, toSignalEnum,
+  SegmentedControl, ToggleChip, Banner, toSignalEnum, SourceTag, AsOfBadge,
 } from "../ui.jsx";
 
 const { CandleChart, IndicatorTable } = Ds;
@@ -156,7 +156,14 @@ export default function TechnicalTab({ ticker }) {
             <ToggleChip label="이치모쿠" active={show.ichimoku} color="#5a8fd9" onClick={() => setShow((s) => ({ ...s, ichimoku: !s.ichimoku }))} />
             <ToggleChip label="피보나치" active={show.fib} color="#e0a458" onClick={() => setShow((s) => ({ ...s, fib: !s.fib }))} />
           </div>
-          <SegmentedControl items={TIMEFRAMES} activeId={interval} onChange={setIntervalId} />
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            {/* 분봉 출처 — 응답의 source/mock/stale (다른 탭의 배지와 같은 규약). as_of 는 없다. */}
+            <AsOfBadge mock={data.mock} stale={data.stale}>
+              {data.mock ? "Mock" : data.stale ? "갱신 지연(캐시)" : "실시간"}
+            </AsOfBadge>
+            <SourceTag source={data.source} />
+            <SegmentedControl items={TIMEFRAMES} activeId={interval} onChange={setIntervalId} />
+          </div>
         </div>
 
         <div style={{ position: "relative" }}>

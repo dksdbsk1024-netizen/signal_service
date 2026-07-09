@@ -99,6 +99,15 @@ def test_technical_schema():
     assert {"OBV 다이버전스", "ATR밴드 위치"} <= names
 
 
+def test_technical_carries_source_flags():
+    """분봉의 출처 배지 — df.attrs 의 source/mock/stale 을 응답 최상위로 올린다.
+
+    conftest 가 STOCK_PROVIDER=mock 을 강제하므로 Mock 태그가 나와야 한다.
+    """
+    body = client.get(f"/api/technical/{TICKER}?bars=100").json()
+    assert (body["source"], body["mock"], body["stale"]) == ("mock", True, False)
+
+
 def test_flow_schema():
     r = client.get(f"/api/flow/{TICKER}")
     assert r.status_code == 200

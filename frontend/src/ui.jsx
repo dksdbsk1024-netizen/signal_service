@@ -115,6 +115,29 @@ export function LabelBadge({ label }) {
   return <span style={{ fontSize: "var(--text-md)", fontWeight: 800, color, background: bg, border: `1px solid ${color}`, borderRadius: "var(--radius-pill)", padding: "4px 16px" }}>{label}</span>;
 }
 
+// 실데이터 출처 태그 — 종목 KIS, 경제지표 FRED/ECOS, 시세 yfinance. mock 은 태그 없음(Mock 배지로 표시).
+const SOURCE_LABEL = { kis: "KIS", fred: "FRED", ecos: "ECOS", yfinance: "yfinance" };
+export function SourceTag({ source }) {
+  const label = SOURCE_LABEL[source];
+  if (!label) return null;
+  return (
+    <span style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.02em", color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-xs)", padding: "0 4px" }}>
+      {label}
+    </span>
+  );
+}
+
+// mock=가짜값 · stale=실데이터지만 갱신 지연(직전 캐시). 둘 다 주의색(골드)으로 구분.
+export function AsOfBadge({ children, mock, stale }) {
+  const warn = mock || stale;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "var(--text-2xs)", color: warn ? "var(--accent-strong)" : "var(--text-tertiary)", fontWeight: 600 }}>
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: warn ? "var(--accent-strong)" : "var(--status-closed)" }} />
+      {children}
+    </span>
+  );
+}
+
 // API 신호 라벨(한글) → IndicatorTable signal enum.
 export function toSignalEnum(korean) {
   if (korean === "매수") return "buy";
