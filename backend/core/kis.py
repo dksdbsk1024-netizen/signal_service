@@ -1,4 +1,4 @@
-"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV + 호가(Level 2) + 수급.
+"""KIS 실연동 — 토큰 + 현재가 + 분봉 + 호가(Level 2) + 수급 + 체결강도 + 거래원.
 
 core.macro / core.quotes 와 같은 역할 분담: HTTP·캐시·재시도·폴백은 이 모듈이 맡고,
 providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독립.
@@ -26,8 +26,28 @@ providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독
     FHKST01010200 은 1회 호출로 10호가 전부(askp1~10 / bidp1~10 + 각 잔량)를 준다.
     페이징이 없다. 장 마감 후·휴장일에는 가격이 전부 "0" 으로 오고, 이는 응답 성공
     (rt_cd=0)이지만 호가가 없는 상태다 — 데이터 실패로 취급해 Mock 으로 폴백한다.
-    체결강도(cttr)는 **이 응답에도 현재가 응답에도 없다.** 별도 TR(FHKST01010300,
-    주식현재가 체결)의 tday_rltv 이며 이번 범위 밖 — get_trade_strength 는 아직 Mock.
+
+체결강도:
+    호가 응답에도 현재가 응답에도 없다. 별도 TR — FHKST01010300(주식현재가 체결)이
+    최근 체결 **30틱**을 최신→과거 순으로 주고, 각 틱에 그 시점의 당일 누적 체결강도
+    `tday_rltv` 가 실려 온다(100 기준: >100 매수 체결 우위). 틱마다 조금씩 움직이므로
+    가장 최신 틱(output[0]) 하나만 쓴다. 같은 응답의 stck_prpr·prdy_ctrt 는 현재가
+    TR(FHKST01010100)의 값과 정확히 일치한다 — 실데이터 교차검증 지점.
+
+    체결강도는 당일 체결에서만 나온다. 장 시작 전·휴장일에는 rt_cd=0 이면서
+    tday_rltv 가 "0" (또는 빈 문자열)로 오고, 이는 호가의 '전 단계가 0' 과 같은
+    취급 — 데이터 실패로 올려 캐시/Mock 으로 폴백한다.
+
+거래원(회원사):
+    FHKST01010600 은 `output` 이 **1행짜리 리스트**다(다른 TR 의 dict 와 다름).
+    한 응답에 매도 상위 5 + 매수 상위 5 + 외국계 집계가 모두 들어 있다.
+
+    **두 상위 5 는 서로 다른 창구 집합이다.** 그래서 창구별 순매수 한 줄로 합칠 수 없다 —
+    한쪽에만 든 창구의 반대편 수량은 0 이 아니라 미상이다. 자세한 이유는 _normalize_broker.
+
+    창구 비중 `*_rlim` 은 `수량 / acml_vol × 100` 과 소수 둘째 자리까지 일치한다(실측).
+    외국계 집계(glob_total_*)는 상위 5 밖 창구까지 합산한 값이라 상위 5 안의 외국계
+    합보다 크다. `glob_ntby_qty == glob_total_shnu_qty - glob_total_seln_qty` 는 항등식.
 
 수급(외국인·기관·프로그램):
     한 TR 로 다 안 나온다. 세 개를 합쳐야 한다.
@@ -80,6 +100,8 @@ TOKEN_PATH = "/oauth2/tokenP"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 MINUTE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
 ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+CCNL_PATH = "/uapi/domestic-stock/v1/quotations/inquire-ccnl"
+MEMBER_PATH = "/uapi/domestic-stock/v1/quotations/inquire-member"
 INVESTOR_PATH = "/uapi/domestic-stock/v1/quotations/inquire-investor"
 ESTIMATE_PATH = "/uapi/domestic-stock/v1/quotations/investor-trend-estimate"
 PROGRAM_PATH = "/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily"
@@ -90,6 +112,10 @@ TR_CURRENT_PRICE = "FHKST01010100"
 TR_MINUTE_OHLCV = "FHKST03010200"
 # 국내주식 호가/예상체결 조회 거래ID.
 TR_ORDERBOOK = "FHKST01010200"
+# 주식현재가 체결 — 최근 30틱. 각 틱에 당일 누적 체결강도(tday_rltv).
+TR_TRADE_STRENGTH = "FHKST01010300"
+# 주식현재가 회원사(거래원) — 매도 상위 5 + 매수 상위 5 + 외국계 집계.
+TR_BROKER = "FHKST01010600"
 # 주식현재가 투자자 — 개인/외국인/기관 확정 순매수(일별 30행). 당일 행은 장 종료 후 채워짐.
 TR_INVESTOR_DAILY = "FHKST01010900"
 # 종목별 외인기관 추정가집계 — 장중 가집계 순매수 '수량'(당일 누적, 5개 시각).
@@ -110,6 +136,14 @@ OHLCV_CACHE_TTL_SEC = 30
 ORDERBOOK_CACHE_TTL_SEC = 3
 
 ORDERBOOK_LEVELS = 10            # KIS 가 주는 호가 단계 수(고정). MockProvider 와 동일.
+
+# 체결강도는 당일 **누적** 비율이라 한 틱으로는 소수 둘째 자리만 움직인다(실측: 79.92→79.93).
+# 호가의 3초는 과하고, 현재가와 같은 10초면 체감 지연 없이 새로고침 연타를 흡수한다.
+STRENGTH_CACHE_TTL_SEC = 10
+
+# 거래원도 당일 누적 수량이라 순위가 분 단위로만 바뀐다. 30초면 충분하다.
+BROKER_CACHE_TTL_SEC = 30
+BROKER_TOP_N = 5                 # KIS 가 주는 창구 수(고정). 매도·매수 각각 5.
 
 # 확정 수급은 하루 한 번, 장중 추정치는 하루 다섯 번만 바뀐다 — 짧은 TTL 은 의미가 없다.
 # 60초면 새로고침 연타를 흡수하면서 10:00 갱신을 1분 안에 따라잡는다.
@@ -170,6 +204,12 @@ _OHLCV_CACHE: dict[tuple[str, str], dict] = {}
 
 # ticker → {"data": orderbook_dict, "ts": epoch_seconds}
 _ORDERBOOK_CACHE: dict[str, dict] = {}
+
+# ticker → {"data": strength_dict, "ts": epoch_seconds}
+_STRENGTH_CACHE: dict[str, dict] = {}
+
+# ticker → {"data": broker_dict, "ts": epoch_seconds}
+_BROKER_CACHE: dict[str, dict] = {}
 
 # ticker → {"data": flow_dict, "ts": epoch_seconds}
 _FLOW_CACHE: dict[str, dict] = {}
@@ -315,7 +355,7 @@ def get_access_token(app_key: str, app_secret: str, force: bool = False) -> str:
     return _TOKEN["access_token"]
 
 
-# ── 현재가 fetch ───────────────────────────────────────────────
+# ── 공통 ───────────────────────────────────────────────────────
 def _to_int(v) -> int:
     return int(float(v)) if v not in (None, "") else 0
 
@@ -324,6 +364,62 @@ def _to_float(v) -> float:
     return float(v) if v not in (None, "") else 0.0
 
 
+def _get_json(path: str, tr_id: str, params: dict, token: str,
+              app_key: str, app_secret: str, what: str) -> dict:
+    """GET → 검증된 응답 body. 인증 실패(401/403)와 데이터 실패를 분리해 던진다.
+
+    체결강도(1개)·수급(3개) TR 이 같은 20줄을 네 번 쓰는 대신 여기로 모았다.
+    현재가·분봉·호가는 이 함수보다 먼저 쓰여 각자 인라인 fetch 를 갖고 있다.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE}{path}",
+            headers={
+                "authorization": f"Bearer {token}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": tr_id,
+                "custtype": "P",
+            },
+            params=params,
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise KISDataError(f"KIS {what} 요청 실패: {e}") from e
+
+    if resp.status_code in (401, 403):
+        raise KISAuthError(f"KIS 인증 거부 (HTTP {resp.status_code}): {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise KISDataError(f"KIS {what} HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as e:
+        raise KISDataError(f"KIS {what} 응답 파싱 실패: {e}") from e
+
+    if body.get("rt_cd") != "0":
+        raise KISDataError(
+            f"KIS {what} 오류: {body.get('msg_cd')} {body.get('msg1')}",
+            msg_cd=str(body.get("msg_cd", "")),
+            msg1=str(body.get("msg1", "")),
+        )
+    return body
+
+
+def _as_of_hhmmss(hhmmss) -> str:
+    """KIS 의 HHMMSS 시각 → "YYYY-MM-DD HH:MM:SS KST". 형식이 아니면 수신 시각.
+
+    호가 접수 시각·체결 시각처럼 **초 단위로 갱신되는** 값에 쓴다. 현재가의 분 단위
+    as_of 로는 두 스냅샷을 구분할 수 없다. 날짜는 응답에 없어 수신 시각(KST)의 날짜.
+    """
+    now = datetime.datetime.now(KST)
+    s = str(hhmmss or "")
+    if len(s) == 6 and s.isdigit():
+        return f"{now:%Y-%m-%d} {s[:2]}:{s[2:4]}:{s[4:]} KST"
+    return now.strftime("%Y-%m-%d %H:%M:%S KST")
+
+
+# ── 현재가 fetch ───────────────────────────────────────────────
 def _fetch_price(ticker: str, token: str, app_key: str, app_secret: str) -> dict:
     """GET inquire-price → KIS `output` dict 원본. 실패는 Auth/Data 로 분류."""
     try:
@@ -701,19 +797,6 @@ def _fetch_orderbook(ticker: str, token: str, app_key: str, app_secret: str) -> 
     return output
 
 
-def _orderbook_as_of(output: dict) -> str:
-    """aspr_acpt_hour(HHMMSS, 호가 접수 시각) → "YYYY-MM-DD HH:MM:SS KST".
-
-    현재가와 달리 초까지 남긴다 — 호가는 초 단위로 갱신되므로 분 단위면 두 스냅샷을
-    구분할 수 없다. 날짜는 응답에 없어 수신 시각(KST)의 날짜를 쓴다.
-    """
-    now = datetime.datetime.now(KST)
-    hhmmss = str(output.get("aspr_acpt_hour") or "")
-    if len(hhmmss) == 6 and hhmmss.isdigit():
-        return f"{now:%Y-%m-%d} {hhmmss[:2]}:{hhmmss[2:4]}:{hhmmss[4:]} KST"
-    return now.strftime("%Y-%m-%d %H:%M:%S KST")
-
-
 def _normalize_orderbook(ticker: str, output: dict) -> dict:
     """KIS output1 → 앱 스키마(MockProvider.get_orderbook 과 동일한 asks/bids/as_of).
 
@@ -745,7 +828,8 @@ def _normalize_orderbook(ticker: str, output: dict) -> dict:
         # (시간외 잔량은 ovtm_total_* 로 따로 온다). 합이 어긋나면 필드 매핑이 틀린 것.
         "total_ask_qty": _to_int(output.get("total_askp_rsqn")),
         "total_bid_qty": _to_int(output.get("total_bidp_rsqn")),
-        "as_of": _orderbook_as_of(output),
+        # 호가 접수 시각(aspr_acpt_hour). 초까지 남긴다 — 호가는 초 단위로 갱신된다.
+        "as_of": _as_of_hhmmss(output.get("aspr_acpt_hour")),
         "source": "kis",
         "mock": False,
         "stale": False,
@@ -807,48 +891,242 @@ def build_orderbook(ticker: str, app_key: str, app_secret: str) -> dict:
     return _copy_book(data)
 
 
-# ── 수급 (외국인·기관·프로그램 순매수) ─────────────────────────
-def _get_json(path: str, tr_id: str, params: dict, token: str,
-              app_key: str, app_secret: str, what: str) -> dict:
-    """GET → 검증된 응답 body. 위 fetch 들과 같은 Auth/Data 분류 규약.
+# ── 체결강도 ───────────────────────────────────────────────────
+def _fetch_trade_strength(ticker: str, token: str, app_key: str, app_secret: str) -> list[dict]:
+    """GET inquire-ccnl → output(최근 30틱, 최신→과거). 빈 응답은 데이터 실패."""
+    body = _get_json(
+        CCNL_PATH, TR_TRADE_STRENGTH,
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+        token, app_key, app_secret, "체결강도",
+    )
+    rows = body.get("output") or []
+    if not rows:
+        raise KISDataError(f"KIS 체결강도 응답이 비었습니다 (ticker={ticker})")
+    return rows
 
-    수급은 TR 이 셋이라 같은 20줄을 세 번 쓰는 대신 여기로 모았다.
+
+def _normalize_trade_strength(ticker: str, rows: list[dict]) -> dict:
+    """KIS output → 앱 스키마(MockProvider.get_trade_strength 와 동일한 strength/as_of).
+
+    응답은 최신→과거 순이라 rows[0] 이 마지막 체결이다. tday_rltv 는 그 시점의 당일
+    누적 체결강도(100 기준, >100 매수 체결 우위) — Mock 이 주던 105.5 같은 값과 같은 척도.
+
+    장 시작 전·휴장일에는 rt_cd=0 인데 tday_rltv 가 0 으로 온다. 호가의 '전 단계가 0'
+    과 같은 취급 — 체결강도 0 인 종목이 아니라 당일 체결이 없는 것이므로 데이터 실패다.
     """
-    try:
-        resp = requests.get(
-            f"{BASE}{path}",
-            headers={
-                "authorization": f"Bearer {token}",
-                "appkey": app_key,
-                "appsecret": app_secret,
-                "tr_id": tr_id,
-                "custtype": "P",
-            },
-            params=params,
-            timeout=10,
-        )
-    except requests.RequestException as e:
-        raise KISDataError(f"KIS {what} 요청 실패: {e}") from e
-
-    if resp.status_code in (401, 403):
-        raise KISAuthError(f"KIS 인증 거부 (HTTP {resp.status_code}): {resp.text[:200]}")
-    if resp.status_code != 200:
-        raise KISDataError(f"KIS {what} HTTP {resp.status_code}: {resp.text[:200]}")
-
-    try:
-        body = resp.json()
-    except ValueError as e:
-        raise KISDataError(f"KIS {what} 응답 파싱 실패: {e}") from e
-
-    if body.get("rt_cd") != "0":
+    head = rows[0]
+    strength = _to_float(head.get("tday_rltv"))
+    if strength <= 0:
         raise KISDataError(
-            f"KIS {what} 오류: {body.get('msg_cd')} {body.get('msg1')}",
-            msg_cd=str(body.get("msg_cd", "")),
-            msg1=str(body.get("msg1", "")),
+            f"KIS 체결강도가 0 (ticker={ticker}) — 장 시작 전·휴장일에는 당일 체결이 없습니다"
         )
-    return body
+    return {
+        "ticker": ticker,
+        "strength": round(strength, 1),
+        # 체결 시각(stck_cntg_hour). 틱 단위라 초까지 남긴다.
+        "as_of": _as_of_hhmmss(head.get("stck_cntg_hour")),
+        "source": "kis",
+        "mock": False,
+        "stale": False,
+    }
 
 
+def mock_trade_strength(ticker: str) -> dict:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    data = MockProvider().get_trade_strength(ticker)
+    data.update({"ticker": ticker, "source": "mock", "mock": True, "stale": False})
+    return data
+
+
+def build_trade_strength(ticker: str, app_key: str, app_secret: str) -> dict:
+    """당일 체결강도. build_orderbook 과 같은 4단 폴백: 캐시 → KIS → stale 캐시 → Mock.
+
+    인증 실패(KISAuthError)만은 폴백 없이 그대로 던진다.
+    """
+    now = time.time()
+    cached = _STRENGTH_CACHE.get(ticker)
+    if cached and now - cached["ts"] < STRENGTH_CACHE_TTL_SEC:
+        return dict(cached["data"])
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False  # 401 로 인한 강제 갱신은 호출당 1회만
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return _normalize_trade_strength(
+                ticker, _fetch_trade_strength(ticker, token, app_key, app_secret))
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return _normalize_trade_strength(
+                ticker, _fetch_trade_strength(ticker, token, app_key, app_secret))
+
+    try:
+        data = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            stale = dict(cached["data"])
+            stale["stale"] = True
+            return stale
+        return mock_trade_strength(ticker)
+
+    _STRENGTH_CACHE[ticker] = {"data": data, "ts": now}
+    return dict(data)
+
+
+# ── 거래원 (회원사 창구) ───────────────────────────────────────
+# 매도 상위와 매수 상위는 **필드 접두어만 다르고 구조가 같다**. glob_yn 만 인덱스 앞에 `_`.
+_SELL_KEYS = ("seln_mbcr_name{i}", "total_seln_qty{i}", "seln_mbcr_rlim{i}", "seln_mbcr_glob_yn_{i}")
+_BUY_KEYS = ("shnu_mbcr_name{i}", "total_shnu_qty{i}", "shnu_mbcr_rlim{i}", "shnu_mbcr_glob_yn_{i}")
+
+
+def _fetch_broker(ticker: str, token: str, app_key: str, app_secret: str) -> dict:
+    """GET inquire-member → output[0]. 이 TR 의 output 은 **1행짜리 리스트**다(dict 아님)."""
+    body = _get_json(
+        MEMBER_PATH, TR_BROKER,
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+        token, app_key, app_secret, "거래원",
+    )
+    rows = body.get("output") or []
+    if not rows:
+        raise KISDataError(f"KIS 거래원 응답이 비었습니다 (ticker={ticker})")
+    return rows[0]
+
+
+def _broker_side(output: dict, keys: tuple[str, ...]) -> list[dict]:
+    """한쪽(매도 또는 매수) 상위 5 창구. 이름이 빈 자리는 건너뛴다(상장 직후·거래 부진 종목)."""
+    name_k, qty_k, pct_k, glob_k = keys
+    rows = []
+    for i in range(1, BROKER_TOP_N + 1):
+        name = str(output.get(name_k.format(i=i)) or "").strip()
+        if not name:
+            continue
+        rows.append({
+            "rank": len(rows) + 1,
+            "name": name,
+            "qty": _to_int(output.get(qty_k.format(i=i))),
+            # KIS 가 주는 비중(%). 실측상 qty / acml_vol * 100 과 소수 둘째 자리까지 일치한다.
+            "pct": _to_float(output.get(pct_k.format(i=i))),
+            "foreign": str(output.get(glob_k.format(i=i)) or "").upper() == "Y",
+        })
+    return rows
+
+
+def _normalize_broker(ticker: str, output: dict) -> dict:
+    """KIS output → 앱 스키마. 매도/매수를 **분리한 두 리스트**로 낸다.
+
+    합쳐서 창구별 순매수 한 줄로 만들 수 없다 — 매도 상위 5 와 매수 상위 5 는 서로 다른
+    창구 집합이다. 한쪽에만 든 창구(실측: 005930 매도 4위 JP모간)의 반대편 수량은 0 이
+    아니라 **미상**이다(그 쪽 5위 수량보다 작다는 것만 안다). 0 으로 채워 순매수를 만들면
+    그 창구의 순매수가 실제 범위의 끝값으로 과장된다. HTS 관습대로 두 리스트로 보여준다.
+
+    외국계는 개별 창구의 glob_yn 뿐 아니라 **상위 5 밖까지 합산한 집계**가 따로 온다
+    (glob_total_*). 그래서 sellers 의 foreign 합보다 foreign.sell_qty 가 크다 — 정상이다.
+
+    장 시작 전·휴장일에는 rt_cd=0 이면서 수량이 전부 0 으로 온다. 호가의 '전 단계가 0'
+    과 같은 취급 — 데이터 실패로 올려 캐시/Mock 으로 폴백한다.
+    """
+    sellers = _broker_side(output, _SELL_KEYS)
+    buyers = _broker_side(output, _BUY_KEYS)
+    volume = _to_int(output.get("acml_vol"))
+
+    if not sellers or not buyers:
+        raise KISDataError(f"KIS 거래원 창구가 비었습니다 (ticker={ticker})")
+    if all(r["qty"] == 0 for r in sellers + buyers):
+        raise KISDataError(
+            f"KIS 거래원 수량이 모두 0 (ticker={ticker}) — 장 시작 전·휴장일에는 창구 집계가 없습니다"
+        )
+
+    sell_qty = _to_int(output.get("glob_total_seln_qty"))
+    buy_qty = _to_int(output.get("glob_total_shnu_qty"))
+    return {
+        "ticker": ticker,
+        "sellers": sellers,
+        "buyers": buyers,
+        # 외국계 전체 집계(상위 5 밖 포함). net_qty 는 KIS 가 준 값을 그대로 쓴다 —
+        # 실측상 buy_qty - sell_qty 와 정확히 일치한다(검증 스크립트가 등식으로 확인).
+        "foreign": {
+            "sell_qty": sell_qty,
+            "buy_qty": buy_qty,
+            "net_qty": _to_int(output.get("glob_ntby_qty")),
+            "sell_pct": _to_float(output.get("glob_seln_rlim")),
+            "buy_pct": _to_float(output.get("glob_shnu_rlim")),
+        },
+        "volume": volume,      # 당일 누적 거래량(주). 창구 비중의 분모.
+        "unit": "주",
+        # 이 TR 응답에는 시각 필드가 없다. 현재가와 같이 수신 시각(KST)을 쓴다.
+        "as_of": datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
+        "source": "kis",
+        "mock": False,
+        "stale": False,
+    }
+
+
+def _copy_brokers(data: dict) -> dict:
+    """캐시본 반환용 복사. sellers/buyers 는 중첩 리스트라 dict() 로는 캐시와 공유된다."""
+    out = dict(data)
+    out["sellers"] = [dict(r) for r in data["sellers"]]
+    out["buyers"] = [dict(r) for r in data["buyers"]]
+    out["foreign"] = dict(data["foreign"])
+    return out
+
+
+def mock_broker_activity(ticker: str) -> dict:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    data = MockProvider().get_broker_activity(ticker)
+    data.update({"ticker": ticker, "source": "mock", "mock": True, "stale": False})
+    return data
+
+
+def build_broker_activity(ticker: str, app_key: str, app_secret: str) -> dict:
+    """거래원 상위. build_orderbook 과 같은 4단 폴백: 캐시 → KIS → stale 캐시 → Mock.
+
+    인증 실패(KISAuthError)만은 폴백 없이 그대로 던진다.
+    """
+    now = time.time()
+    cached = _BROKER_CACHE.get(ticker)
+    if cached and now - cached["ts"] < BROKER_CACHE_TTL_SEC:
+        return _copy_brokers(cached["data"])
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False  # 401 로 인한 강제 갱신은 호출당 1회만
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return _normalize_broker(ticker, _fetch_broker(ticker, token, app_key, app_secret))
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return _normalize_broker(ticker, _fetch_broker(ticker, token, app_key, app_secret))
+
+    try:
+        data = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            stale = _copy_brokers(cached["data"])
+            stale["stale"] = True
+            return stale
+        return mock_broker_activity(ticker)
+
+    _BROKER_CACHE[ticker] = {"data": data, "ts": now}
+    return _copy_brokers(data)
+
+
+# ── 수급 (외국인·기관·프로그램 순매수) ─────────────────────────
 def _today_kst() -> str:
     return datetime.datetime.now(KST).strftime("%Y%m%d")
 

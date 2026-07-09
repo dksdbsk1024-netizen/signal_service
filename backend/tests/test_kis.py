@@ -1,4 +1,4 @@
-"""core.kis — 토큰 캐시/갱신, 인증실패 vs 데이터실패 구분, 현재가·분봉·호가 폴백 체인.
+"""core.kis — 토큰 캐시/갱신, 인증실패 vs 데이터실패 구분, 현재가·분봉·호가·체결강도 폴백 체인.
 
 네트워크를 타지 않는다. monkeypatch 로 requests.post/get 을 대체한다.
 """
@@ -53,6 +53,8 @@ def clean_state(monkeypatch, tmp_path):
     monkeypatch.setattr(kis, "_PRICE_CACHE", {})
     monkeypatch.setattr(kis, "_OHLCV_CACHE", {})
     monkeypatch.setattr(kis, "_ORDERBOOK_CACHE", {})
+    monkeypatch.setattr(kis, "_STRENGTH_CACHE", {})
+    monkeypatch.setattr(kis, "_BROKER_CACHE", {})
     monkeypatch.setattr(kis, "_FLOW_CACHE", {})
     monkeypatch.setattr(kis, "_FLOW_SERIES_CACHE", {})
     monkeypatch.setattr(kis, "TOKEN_FILE", tmp_path / ".kis_token.json")
@@ -646,7 +648,328 @@ def test_mock_orderbook_schema():
     assert len(book["asks"]) == len(book["bids"]) == kis.ORDERBOOK_LEVELS
 
 
-# ── KISProvider 위임 + 나머지 stub 유지 ────────────────────────
+# ── 체결강도: 최신 틱의 tday_rltv + 폴백 체인 ──────────────────
+# 실 응답(005930, 2026-07-09 13:48) 구조 그대로. output 은 최근 30틱, 최신→과거.
+def _ccnl_rows(rltv: str = "79.93") -> list[dict]:
+    return [
+        {"stck_cntg_hour": "134845", "stck_prpr": "275500", "prdy_vrss": "-2000",
+         "prdy_vrss_sign": "5", "cntg_vol": "4", "tday_rltv": rltv, "prdy_ctrt": "-0.72"},
+        # 한 틱 전. 최신 틱을 안 고르면 여기 값(79.92)이 새어 나온다.
+        {"stck_cntg_hour": "134842", "stck_prpr": "275500", "prdy_vrss": "-2000",
+         "prdy_vrss_sign": "5", "cntg_vol": "50", "tday_rltv": "79.92", "prdy_ctrt": "-0.72"},
+    ]
+
+
+OK_CCNL = {"rt_cd": "0", "output": _ccnl_rows()}
+
+
+def _fake_ccnl_get(body=OK_CCNL, calls: list | None = None):
+    def _get(url, headers=None, params=None, **k):
+        if calls is not None:
+            calls.append(params["FID_INPUT_ISCD"])
+        assert headers["tr_id"] == kis.TR_TRADE_STRENGTH
+        return FakeResp(200, body)
+
+    return _get
+
+
+def test_trade_strength_schema_matches_mock(monkeypatch):
+    """프론트(ExecutionStrengthMeter)가 안 바뀌려면 Mock 과 키·척도가 같아야 한다."""
+    from backend.core.providers import MockProvider
+
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    data = kis.build_trade_strength("005930", KEY, SECRET)
+    mock = MockProvider().get_trade_strength("005930")
+
+    assert set(data) >= set(mock)  # strength/as_of 는 최소 보장
+    assert isinstance(data["strength"], float)
+    assert (data["source"], data["mock"], data["stale"]) == ("kis", False, False)
+
+
+def test_trade_strength_uses_latest_tick(monkeypatch):
+    """output[0] 이 마지막 체결. as_of 도 수신 시각이 아니라 그 체결 시각이다."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    data = kis.build_trade_strength("005930", KEY, SECRET)
+
+    assert data["strength"] == 79.9          # 79.93 (최신), 79.92 (한 틱 전) 아님
+    assert data["as_of"].endswith(" 13:48:45 KST")
+
+
+def test_trade_strength_zero_falls_back_to_mock(monkeypatch):
+    """장 시작 전·휴장일: rt_cd=0 이지만 tday_rltv 가 0 → 데이터 실패 → Mock."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    body = {"rt_cd": "0", "output": _ccnl_rows(rltv="0")}
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get(body))
+    data = kis.build_trade_strength("005930", KEY, SECRET)
+
+    assert (data["source"], data["mock"], data["stale"]) == ("mock", True, False)
+    assert data["strength"] > 0
+
+
+def test_trade_strength_empty_output_falls_back_to_mock(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get({"rt_cd": "0", "output": []}))
+    assert kis.build_trade_strength("005930", KEY, SECRET)["mock"] is True
+
+
+def test_trade_strength_auth_error_not_masked_as_mock(monkeypatch):
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: FakeResp(403, {"error_code": "EGW00121"})
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_trade_strength("005930", "bogus", "bogus")
+
+
+def test_trade_strength_data_error_falls_back_to_stale_cache(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    fresh = kis.build_trade_strength("005930", KEY, SECRET)
+    assert fresh["stale"] is False
+
+    kis._STRENGTH_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료 → 재요청
+    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    stale = kis.build_trade_strength("005930", KEY, SECRET)
+
+    assert (stale["mock"], stale["stale"]) == (False, True)
+    assert stale["strength"] == fresh["strength"]  # 직전 실데이터 유지
+
+
+def test_trade_strength_data_error_retried(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls = []
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+    )
+    kis.build_trade_strength("005930", KEY, SECRET)
+    assert len(calls) == kis._FETCH_RETRIES + 1
+
+
+def test_trade_strength_401_triggers_one_forced_refresh(monkeypatch):
+    posts, gets = [], []
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
+    )
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_trade_strength("005930", KEY, SECRET)
+    assert len(posts) == 2   # 최초 발급 + 강제 갱신 1회
+    assert len(gets) == 2    # 재발급 후 재시도 1회
+
+
+def test_trade_strength_cache_ttl(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls: list = []
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get(calls=calls))
+    kis.build_trade_strength("005930", KEY, SECRET)
+    kis.build_trade_strength("005930", KEY, SECRET)
+    assert len(calls) == 1  # TTL 내 두 번째는 캐시
+
+
+def test_mock_trade_strength_schema():
+    data = kis.mock_trade_strength("005930")
+    assert set(data) >= {"ticker", "strength", "as_of", "source", "mock", "stale"}
+    assert data["mock"] is True and data["strength"] > 0
+
+
+# ── 거래원: 매도/매수 상위 5 분리 + 외국계 집계 + 폴백 체인 ────
+# 실 응답(005930, 2026-07-09 14:12) 구조 그대로. output 은 **1행짜리 리스트**다.
+# 매도 4위 JP모간(외국계)은 매수 상위 5 에 없다 — 두 리스트의 창구 집합이 다르다는 실제 사례.
+_SELL_BROKERS = [("미래에셋증권", 2_089_726, "10.31", "N"), ("키움증권", 1_477_947, "7.29", "N"),
+                 ("KB증권", 1_472_682, "7.27", "N"), ("JP모간", 1_414_670, "6.98", "Y"),
+                 ("NH투자증권", 1_318_050, "6.50", "N")]
+_BUY_BROKERS = [("미래에셋증권", 2_017_274, "9.95", "N"), ("키움증권", 1_878_101, "9.27", "N"),
+                ("NH투자증권", 1_511_262, "7.46", "N"), ("KB증권", 1_416_594, "6.99", "N"),
+                ("삼성증권", 1_372_178, "6.77", "N")]
+
+
+def _member_output(sells=None, buys=None, acml_vol: str = "20270236") -> dict:
+    out = {"acml_vol": acml_vol,
+           "glob_total_seln_qty": "2932482", "glob_seln_rlim": "14.48",
+           "glob_total_shnu_qty": "2129394", "glob_shnu_rlim": "10.51",
+           "glob_ntby_qty": "-803088"}
+    for i, (name, qty, rlim, glob) in enumerate(sells or _SELL_BROKERS, start=1):
+        out |= {f"seln_mbcr_name{i}": name, f"total_seln_qty{i}": str(qty),
+                f"seln_mbcr_rlim{i}": rlim, f"seln_mbcr_glob_yn_{i}": glob}
+    for i, (name, qty, rlim, glob) in enumerate(buys or _BUY_BROKERS, start=1):
+        out |= {f"shnu_mbcr_name{i}": name, f"total_shnu_qty{i}": str(qty),
+                f"shnu_mbcr_rlim{i}": rlim, f"shnu_mbcr_glob_yn_{i}": glob}
+    return out
+
+
+OK_MEMBER = {"rt_cd": "0", "output": [_member_output()]}
+
+
+def _fake_member_get(body=OK_MEMBER, calls: list | None = None):
+    def _get(url, headers=None, params=None, **k):
+        if calls is not None:
+            calls.append(params["FID_INPUT_ISCD"])
+        assert headers["tr_id"] == kis.TR_BROKER
+        return FakeResp(200, body)
+
+    return _get
+
+
+def test_broker_schema_matches_mock(monkeypatch):
+    """프론트가 안 바뀌려면 MockProvider.get_broker_activity 와 키·구조가 같아야 한다."""
+    from backend.core.providers import MockProvider
+
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    data = kis.build_broker_activity("005930", KEY, SECRET)
+    mock = MockProvider().get_broker_activity("005930")
+
+    assert set(data) >= set(mock)
+    for side in ("sellers", "buyers"):
+        assert len(data[side]) == len(mock[side]) == kis.BROKER_TOP_N
+        assert all(set(r) == {"rank", "name", "qty", "pct", "foreign"} for r in data[side])
+    assert set(data["foreign"]) == set(mock["foreign"])
+    assert (data["source"], data["mock"], data["stale"]) == ("kis", False, False)
+
+
+def test_broker_sides_are_separate_sets(monkeypatch):
+    """매도 상위와 매수 상위는 창구 집합이 다르다 — 합쳐서 순매수 한 줄로 만들면 안 된다."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    data = kis.build_broker_activity("005930", KEY, SECRET)
+
+    sellers, buyers = data["sellers"], data["buyers"]
+    assert [r["name"] for r in sellers][:4] == ["미래에셋증권", "키움증권", "KB증권", "JP모간"]
+    assert [r["rank"] for r in sellers] == [1, 2, 3, 4, 5]
+    assert [r["qty"] for r in sellers] == sorted((r["qty"] for r in sellers), reverse=True)
+
+    # JP모간은 매도 4위지만 매수 상위 5 에는 없다. 매수량이 0 인 게 아니라 미상이다.
+    assert "JP모간" not in {r["name"] for r in buyers}
+    assert sellers[3]["foreign"] is True and sellers[0]["foreign"] is False
+
+    # 비중은 KIS 가 준 값. 수량 / 거래량 × 100 과 소수 둘째 자리까지 맞아야 한다.
+    for r in sellers + buyers:
+        assert abs(r["pct"] - r["qty"] / data["volume"] * 100) < 0.01
+
+
+def test_broker_foreign_aggregate_exceeds_top5(monkeypatch):
+    """외국계 집계는 상위 5 밖 창구까지 포함한다 → 상위 5 안 외국계 합보다 크다."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    f = kis.build_broker_activity("005930", KEY, SECRET)["foreign"]
+
+    assert f["net_qty"] == f["buy_qty"] - f["sell_qty"] == -803_088
+    assert f["sell_qty"] > 1_414_670  # JP모간(상위 5 안 유일 외국계) 하나보다 크다
+
+
+def test_broker_all_zero_qty_falls_back_to_mock(monkeypatch):
+    """장 시작 전·휴장일: rt_cd=0 이지만 창구 수량이 전부 0 → 데이터 실패 → Mock."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    zeros = [(name, 0, "0.00", glob) for name, _, _, glob in _SELL_BROKERS]
+    body = {"rt_cd": "0", "output": [_member_output(sells=zeros, buys=zeros, acml_vol="0")]}
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get(body))
+    data = kis.build_broker_activity("005930", KEY, SECRET)
+
+    assert (data["source"], data["mock"], data["stale"]) == ("mock", True, False)
+    assert len(data["sellers"]) == kis.BROKER_TOP_N
+
+
+def test_broker_empty_output_falls_back_to_mock(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get({"rt_cd": "0", "output": []}))
+    assert kis.build_broker_activity("005930", KEY, SECRET)["mock"] is True
+
+
+def test_broker_blank_names_are_skipped(monkeypatch):
+    """거래 부진 종목은 창구 자리가 빈 문자열로 온다. 그 자리는 빼고 순위를 다시 매긴다."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    sells = _SELL_BROKERS[:2] + [("", 0, "0.00", "N")] * 3
+    body = {"rt_cd": "0", "output": [_member_output(sells=sells)]}
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get(body))
+    data = kis.build_broker_activity("005930", KEY, SECRET)
+
+    assert [r["rank"] for r in data["sellers"]] == [1, 2]
+    assert len(data["buyers"]) == kis.BROKER_TOP_N
+    assert data["mock"] is False  # 한쪽이 짧아도 데이터 실패는 아니다
+
+
+def test_broker_auth_error_not_masked_as_mock(monkeypatch):
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: FakeResp(403, {"error_code": "EGW00121"})
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_broker_activity("005930", "bogus", "bogus")
+
+
+def test_broker_data_error_falls_back_to_stale_cache(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    fresh = kis.build_broker_activity("005930", KEY, SECRET)
+    assert fresh["stale"] is False
+
+    kis._BROKER_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료 → 재요청
+    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    stale = kis.build_broker_activity("005930", KEY, SECRET)
+
+    assert (stale["mock"], stale["stale"]) == (False, True)
+    assert stale["sellers"] == fresh["sellers"]  # 직전 실데이터 유지
+
+
+def test_broker_data_error_retried(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls = []
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+    )
+    kis.build_broker_activity("005930", KEY, SECRET)
+    assert len(calls) == kis._FETCH_RETRIES + 1
+
+
+def test_broker_401_triggers_one_forced_refresh(monkeypatch):
+    posts, gets = [], []
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
+    )
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_broker_activity("005930", KEY, SECRET)
+    assert len(posts) == 2   # 최초 발급 + 강제 갱신 1회
+    assert len(gets) == 2    # 재발급 후 재시도 1회
+
+
+def test_broker_cache_ttl(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls: list = []
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get(calls=calls))
+    kis.build_broker_activity("005930", KEY, SECRET)
+    kis.build_broker_activity("005930", KEY, SECRET)
+    assert len(calls) == 1  # TTL 내 두 번째는 캐시
+
+
+def test_broker_cache_not_poisoned_by_caller(monkeypatch):
+    """캐시본을 얕은 복사로 주면 호출자가 sellers 를 건드릴 때 캐시가 오염된다."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    first = kis.build_broker_activity("005930", KEY, SECRET)
+    first["sellers"][0]["qty"] = -1
+    first["sellers"].clear()
+    first["foreign"]["net_qty"] = 0
+
+    second = kis.build_broker_activity("005930", KEY, SECRET)  # TTL 내 → 캐시본
+    assert len(second["sellers"]) == kis.BROKER_TOP_N
+    assert second["sellers"][0]["qty"] == 2_089_726
+    assert second["foreign"]["net_qty"] == -803_088
+
+
+def test_mock_broker_activity_schema():
+    data = kis.mock_broker_activity("005930")
+    assert set(data) >= {"ticker", "sellers", "buyers", "foreign", "volume", "as_of",
+                         "source", "mock", "stale"}
+    assert data["mock"] is True
+    assert len(data["sellers"]) == len(data["buyers"]) == kis.BROKER_TOP_N
+
+
+# ── KISProvider 위임 ───────────────────────────────────────────
 def test_provider_delegates_current_price(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
@@ -669,18 +992,26 @@ def test_provider_delegates_orderbook(monkeypatch):
     assert book["source"] == "kis"
 
 
-def test_kis_provider_unimplemented_trs_fall_back_to_mock():
-    """체결강도·거래원은 TR 미연동 → Mock 위임. 앱이 NotImplementedError 로 죽지 않는다.
+def test_provider_delegates_trade_strength(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    data = KISProvider(KEY, SECRET).get_trade_strength("005930")
+    assert data["strength"] == 79.9
+    assert data["source"] == "kis"
 
-    체결강도는 별도 TR(FHKST01010300)이 필요하다.
-    """
+
+def test_provider_delegates_broker_activity(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    data = KISProvider(KEY, SECRET).get_broker_activity("005930")
+    assert data["sellers"][0]["name"] == "미래에셋증권"
+    assert data["source"] == "kis"
+
+
+def test_kis_provider_has_no_mock_fallback():
+    """일곱 메서드가 전부 실연동됐다 — 미연동 TR 용 `fallback` 인자는 사라졌다."""
     p = KISProvider(KEY, SECRET)
-
-    strength = p.get_trade_strength("005930")
-    assert strength["strength"] > 0 and strength["mock"] is True
-
-    brokers = p.get_broker_activity("005930")
-    assert brokers and all(r["mock"] is True for r in brokers)
+    assert not hasattr(p, "fallback")
 
 
 def test_kis_provider_current_price_is_abc_method():

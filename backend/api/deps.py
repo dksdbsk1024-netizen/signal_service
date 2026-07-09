@@ -34,7 +34,6 @@ def _build_stock_provider() -> StockProvider:
     app_secret = os.getenv("KIS_APP_SECRET")
     if not (app_key and app_secret):
         return MockProvider()
-    # 체결강도·거래원은 TR 미연동 → KISProvider 내부에서 이 Mock 으로 위임된다.
     return KISProvider(app_key, app_secret, os.getenv("KIS_ACCOUNT_NO", ""))
 
 

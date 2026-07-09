@@ -74,10 +74,19 @@ def test_investor_flow_series_deterministic():
 
 
 def test_broker_activity():
-    brokers = MockProvider().get_broker_activity("005930")
-    assert len(brokers) == 8
-    for br in brokers:
-        assert br["net"] == br["buy"] - br["sell"]
-    # 순매수 절대값 내림차순
-    mags = [abs(br["net"]) for br in brokers]
-    assert mags == sorted(mags, reverse=True)
+    data = MockProvider().get_broker_activity("005930")
+    assert len(data["sellers"]) == len(data["buyers"]) == 5
+
+    for side in ("sellers", "buyers"):
+        rows = data[side]
+        assert [r["rank"] for r in rows] == [1, 2, 3, 4, 5]
+        # 상위 5 는 수량 내림차순. 비중은 KIS 규약대로 수량 / 거래량 × 100.
+        assert [r["qty"] for r in rows] == sorted((r["qty"] for r in rows), reverse=True)
+        for r in rows:
+            assert abs(r["pct"] - r["qty"] / data["volume"] * 100) < 0.01
+        assert sum(r["qty"] for r in rows) <= data["volume"]
+
+    f = data["foreign"]
+    assert f["net_qty"] == f["buy_qty"] - f["sell_qty"]
+    # 외국계 집계는 상위 5 밖 창구까지 포함 → 상위 5 안의 외국계 합보다 크다 (실데이터와 같은 성질).
+    assert f["sell_qty"] >= sum(r["qty"] for r in data["sellers"] if r["foreign"])

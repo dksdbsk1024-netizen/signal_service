@@ -110,9 +110,11 @@ def test_flow_schema():
     series = body["series"]
     assert {"dates", "foreign", "institution", "program"} <= set(series)
     assert len(series["dates"]) == len(series["foreign"]) == 20
-    # 거래원
-    assert len(body["brokers"]) == 8
-    assert {"name", "buy", "sell", "net"} <= set(body["brokers"][0])
+    # 거래원 — 매도 상위 / 매수 상위는 창구 집합이 달라 분리해 낸다.
+    brokers = body["brokers"]
+    assert len(brokers["sellers"]) == len(brokers["buyers"]) == 5
+    assert {"rank", "name", "qty", "pct", "foreign"} <= set(brokers["sellers"][0])
+    assert {"sell_qty", "buy_qty", "net_qty"} <= set(brokers["foreign"])
     assert body["header"]["price"] > 0
 
 

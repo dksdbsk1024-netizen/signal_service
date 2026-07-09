@@ -45,8 +45,8 @@ class StockProvider(ABC):
         """외국인·기관·프로그램 일별 순매수 시계열 (수급 추이 차트용)."""
 
     @abstractmethod
-    def get_broker_activity(self, ticker: str) -> list[dict]:
-        """거래원(창구)별 매수/매도/순매수 상위."""
+    def get_broker_activity(self, ticker: str) -> dict:
+        """거래원(창구) 매도 상위 / 매수 상위 + 외국계 집계. 두 리스트는 창구 집합이 다르다."""
 
 
 class MacroProvider(ABC):
@@ -200,17 +200,51 @@ class MockProvider(StockProvider, MacroProvider):
             "as_of": self.as_of,
         }
 
-    def get_broker_activity(self, ticker: str) -> list[dict]:
+    # 실제 KIS 회원사명 표기 그대로. 외국계 3곳은 glob_yn="Y" 로 오는 창구들.
+    _BROKERS = ["미래에셋증권", "삼성증권", "키움증권", "NH투자증권", "한국증권",
+                "KB증권", "신한투자", "메리츠", "모간스탠리", "골드만삭스", "JP모간"]
+    _FOREIGN_BROKERS = frozenset({"모간스탠리", "골드만삭스", "JP모간"})
+
+    def _broker_side(self, rng, volume: int) -> list[dict]:
+        """상위 5 창구 한쪽. 비중은 KIS 규약대로 `수량 / 거래량 × 100`."""
+        picked = rng.choice(len(self._BROKERS), size=5, replace=False)
+        qtys = sorted((float(rng.uniform(0.05, 0.13)) * volume for _ in picked), reverse=True)
+        return [
+            {"rank": i + 1,
+             "name": self._BROKERS[j],
+             "qty": int(qty),
+             "pct": round(qty / volume * 100, 2) if volume else 0.0,
+             "foreign": self._BROKERS[j] in self._FOREIGN_BROKERS}
+            for i, (j, qty) in enumerate(zip(picked, qtys))
+        ]
+
+    def get_broker_activity(self, ticker: str) -> dict:
+        """kis._normalize_broker 와 동일 스키마. 매도/매수는 **창구 집합이 다르다**.
+
+        KIS 가 매도 상위 5 와 매수 상위 5 를 따로 주기 때문이다(합쳐서 순매수 한 줄로
+        만들 수 없다 — kis._normalize_broker 참고). 여기서도 두 리스트를 독립 추출한다.
+        """
         rng = np.random.default_rng(_seed_for(ticker) + 5)
-        names = ["미래에셋", "삼성증권", "키움증권", "NH투자", "한국투자", "KB증권",
-                 "신한투자", "메리츠", "모간스탠리", "골드만삭스"]
-        rows = []
-        for name in names:
-            buy = int(rng.integers(1_000, 200_000))
-            sell = int(rng.integers(1_000, 200_000))
-            rows.append({"name": name, "buy": buy, "sell": sell, "net": buy - sell})
-        rows.sort(key=lambda r: abs(r["net"]), reverse=True)
-        return rows[:8]
+        volume = int(self.get_minute_ohlcv(ticker)["volume"].sum())
+        sellers = self._broker_side(rng, volume)
+        buyers = self._broker_side(rng, volume)
+        # 외국계 집계는 상위 5 밖 창구까지 포함하므로 상위 5 안의 외국계 합보다 크다.
+        sell_qty = sum(r["qty"] for r in sellers if r["foreign"]) + int(volume * 0.03)
+        buy_qty = sum(r["qty"] for r in buyers if r["foreign"]) + int(volume * 0.03)
+        return {
+            "sellers": sellers,
+            "buyers": buyers,
+            "foreign": {
+                "sell_qty": sell_qty,
+                "buy_qty": buy_qty,
+                "net_qty": buy_qty - sell_qty,
+                "sell_pct": round(sell_qty / volume * 100, 2) if volume else 0.0,
+                "buy_pct": round(buy_qty / volume * 100, 2) if volume else 0.0,
+            },
+            "volume": volume,
+            "unit": "주",
+            "as_of": self.as_of,
+        }
 
     # -- 매크로 (합성 고정값) --
     def get_economic_indicator(self, name: str) -> dict:
@@ -249,20 +283,15 @@ class MockProvider(StockProvider, MacroProvider):
 class KISProvider(StockProvider):
     """한국투자증권 KIS API 연동.
 
-    실연동된 것은 `get_current_price`, `get_minute_ohlcv`, `get_orderbook`,
-    `get_investor_flow`, `get_investor_flow_series` 다섯이다(core.kis).
-    체결강도·거래원은 아직 TR 미연동 — `fallback`(기본 MockProvider)에 위임하고
-    `mock: True` 를 실어 보낸다. 미구현 메서드 하나 때문에 앱이 죽지 않게 하려는 것.
-    개별 TR 이 붙는 대로 위임을 실 호출로 바꾼다.
+    **StockProvider 의 일곱 메서드가 전부 실연동됐다**(core.kis). 미연동 TR 을 Mock 에
+    위임하던 `fallback` 인자는 그래서 사라졌다 — 데이터 실패 시의 Mock 폴백은 층이 다르고
+    (core.kis 4단 폴백), 응답의 `mock: True` 로 구분된다.
     """
 
-    def __init__(self, app_key: str, app_secret: str, account: str = "",
-                 fallback: StockProvider | None = None):
+    def __init__(self, app_key: str, app_secret: str, account: str = ""):
         self.app_key = app_key
         self.app_secret = app_secret
         self.account = account  # 현재가 조회엔 불필요. 주문·잔고 단계에서 사용.
-        # 미연동 TR 전용 폴백. 실데이터 실패 시 폴백은 core.kis 안에서 따로 처리한다.
-        self.fallback = fallback or MockProvider()
 
     def get_current_price(self, ticker: str) -> dict:
         """실시간 현재가. 캐시·재시도·stale 폴백은 core.kis 가 처리.
@@ -301,12 +330,13 @@ class KISProvider(StockProvider):
         return kis.build_orderbook(ticker, self.app_key, self.app_secret)
 
     def get_trade_strength(self, ticker: str) -> dict:
-        """**Mock 폴백.** 체결강도는 호가 TR(FHKST01010200) 응답에도, 현재가 TR 에도 없다.
-        별도 TR — FHKST01010300(주식현재가 체결)의 tday_rltv 가 필요하다. 다음 단계.
+        """당일 체결강도(100 기준, >100 매수 체결 우위). 최근 체결 틱의 tday_rltv.
+
+        캐시·재시도·stale 폴백은 core.kis 가 처리한다. 장 시작 전·휴장일엔 KIS 가
+        0 을 주므로 Mock 으로 폴백한다(data["mock"] is True).
         """
-        data = self.fallback.get_trade_strength(ticker)
-        data.update({"ticker": ticker, "source": "mock", "mock": True, "stale": False})
-        return data
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_trade_strength(ticker, self.app_key, self.app_secret)
 
     def get_investor_flow_series(self, ticker: str, days: int = 20) -> dict:
         """일별 수급 추이. **확정 행만** 담는다 — 장중이면 오늘은 빠지고 어제까지다.
@@ -316,12 +346,15 @@ class KISProvider(StockProvider):
         from . import kis  # 지연 import (requests 의존)
         return kis.build_investor_flow_series(ticker, self.app_key, self.app_secret, days)
 
-    def get_broker_activity(self, ticker: str) -> list[dict]:
-        """**Mock 폴백.** 거래원 TR 미연동 (로드맵 §10 2단계)."""
-        rows = self.fallback.get_broker_activity(ticker)
-        for row in rows:
-            row.update({"source": "mock", "mock": True})
-        return rows
+    def get_broker_activity(self, ticker: str) -> dict:
+        """거래원 매도 상위 5 / 매수 상위 5 + 외국계 집계(상위 5 밖 포함).
+
+        두 리스트는 창구 집합이 다르다 — 합쳐서 창구별 순매수를 만들 수 없다.
+        캐시·재시도·stale 폴백은 core.kis 가 처리한다. 장 시작 전·휴장일엔 KIS 가
+        수량 0 을 주므로 Mock 으로 폴백한다(data["mock"] is True).
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_broker_activity(ticker, self.app_key, self.app_secret)
 
 
 class MacroDataProvider(MacroProvider):
@@ -339,7 +372,6 @@ class MacroDataProvider(MacroProvider):
         self.fred_key = fred_key
         self.ecos_key = ecos_key
         self.live_quotes = live_quotes
-        self._mock = MockProvider()  # 발표일정은 Mock 유지
 
     def get_economic_indicator(self, name: str) -> dict:
         from . import macro  # 지연 import (requests 의존)
