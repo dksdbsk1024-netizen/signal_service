@@ -21,6 +21,10 @@ class StockProvider(ABC):
     """종목 데이터 소스."""
 
     @abstractmethod
+    def get_current_price(self, ticker: str) -> dict:
+        """현재가 스냅샷. price/change/change_pct/open/high/low/volume/as_of + source·mock·stale."""
+
+    @abstractmethod
     def get_minute_ohlcv(self, ticker: str, interval: str = "1m") -> pd.DataFrame:
         """분봉 OHLCV. open/high/low/close/volume 컬럼, 시간 오름차순 DatetimeIndex."""
 
@@ -87,6 +91,33 @@ class MockProvider(StockProvider, MacroProvider):
         self.as_of = as_of
 
     # -- 종목 --
+    def get_current_price(self, ticker: str) -> dict:
+        """당일 분봉에서 파생한 현재가. kis._normalize 와 동일 스키마.
+
+        전일 종가가 없으므로 등락은 '당일 시가 대비'로 근사한다(KIS 는 전일 종가 대비).
+        """
+        df = self.get_minute_ohlcv(ticker)
+        last = float(df["close"].iloc[-1])
+        first = float(df["open"].iloc[0])
+        change = last - first
+        return {
+            "ticker": ticker,
+            "market": "",
+            "sector": "",
+            "price": round(last, 1),
+            "change": round(change, 1),
+            "change_pct": round(change / first * 100, 2) if first else 0.0,
+            "sign": "2" if change > 0 else "5" if change < 0 else "3",
+            "open": round(first, 1),
+            "high": round(float(df["high"].max()), 1),
+            "low": round(float(df["low"].min()), 1),
+            "volume": int(df["volume"].sum()),
+            "as_of": self.as_of,
+            "source": "mock",
+            "mock": True,
+            "stale": False,
+        }
+
     def get_minute_ohlcv(self, ticker: str, interval: str = "1m") -> pd.DataFrame:
         rng = np.random.default_rng(_seed_for(ticker))
         n = self.bars
@@ -205,14 +236,22 @@ class MockProvider(StockProvider, MacroProvider):
         return {"name": "VIX", "value": 17.3, "change_pct": 2.1, "as_of": self.as_of}
 
 
-# ── 실연동 골격 (후순위) ───────────────────────────────────────
+# ── 실연동 ─────────────────────────────────────────────────────
 class KISProvider(StockProvider):
-    """한국투자증권 KIS API 연동. 실연동은 로드맵 §10 2단계."""
+    """한국투자증권 KIS API 연동. 현재가부터 붙인다 — 나머지는 아직 골격."""
 
-    def __init__(self, app_key: str, app_secret: str, account: str):
+    def __init__(self, app_key: str, app_secret: str, account: str = ""):
         self.app_key = app_key
         self.app_secret = app_secret
-        self.account = account
+        self.account = account  # 현재가 조회엔 불필요. 주문·잔고 단계에서 사용.
+
+    def get_current_price(self, ticker: str) -> dict:
+        """실시간 현재가. 캐시·재시도·stale 폴백은 core.kis 가 처리.
+
+        키가 틀리면 core.kis.KISAuthError 가 올라온다(Mock 으로 폴백하지 않음).
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_current_price(ticker, self.app_key, self.app_secret)
 
     def get_minute_ohlcv(self, ticker: str, interval: str = "1m") -> pd.DataFrame:
         raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")

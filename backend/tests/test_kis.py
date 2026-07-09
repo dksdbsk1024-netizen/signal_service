@@ -1,4 +1,4 @@
-"""core.kis — 토큰 캐시/갱신, 인증실패 vs 데이터실패 구분.
+"""core.kis — 토큰 캐시/갱신, 인증실패 vs 데이터실패 구분, 현재가 폴백 체인.
 
 네트워크를 타지 않는다. monkeypatch 로 requests.post/get 을 대체한다.
 """
@@ -9,8 +9,23 @@ import time
 import pytest
 
 from backend.core import kis
+from backend.core.providers import KISProvider
 
 KEY, SECRET = "appkey", "appsecret"
+
+# KIS inquire-price 정상 응답의 output (필요한 필드만).
+OK_OUTPUT = {
+    "rprs_mrkt_kor_name": "KOSPI200",
+    "bstp_kor_isnm": "전기·전자",
+    "stck_prpr": "78900",
+    "prdy_vrss": "900",
+    "prdy_ctrt": "1.15",
+    "prdy_vrss_sign": "2",
+    "stck_oprc": "78000",
+    "stck_hgpr": "79200",
+    "stck_lwpr": "77800",
+    "acml_vol": "12345678",
+}
 
 
 class FakeResp:
@@ -29,6 +44,7 @@ class FakeResp:
 def clean_state(monkeypatch, tmp_path):
     """캐시·토큰 파일을 테스트마다 격리. 재시도 백오프는 0 으로."""
     monkeypatch.setattr(kis, "_TOKEN", {})
+    monkeypatch.setattr(kis, "_PRICE_CACHE", {})
     monkeypatch.setattr(kis, "TOKEN_FILE", tmp_path / ".kis_token.json")
     monkeypatch.setattr(kis, "_RETRY_BACKOFF_SEC", 0)
 
@@ -152,3 +168,129 @@ def test_token_issue_not_retried(monkeypatch):
         kis.get_access_token(KEY, SECRET)
     assert len(calls) == 1
     assert ei.value.msg_cd == "EGW00133"
+
+
+# ── 현재가: 인증 실패는 Mock 으로 숨기지 않는다 ────────────────
+def test_auth_error_not_masked_as_mock(monkeypatch):
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: FakeResp(403, {"error_code": "EGW00121"})
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_current_price("005930", "bogus", "bogus")
+
+
+def test_price_401_triggers_one_forced_refresh(monkeypatch):
+    """서버가 토큰을 거부하면 1회 재발급 후 재시도. 두 번째 401 은 KISAuthError."""
+    posts, gets = [], []
+    monkeypatch.setattr(
+        kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
+    )
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+    )
+    with pytest.raises(kis.KISAuthError):
+        kis.build_current_price("005930", KEY, SECRET)
+    assert len(posts) == 2   # 최초 발급 + 강제 갱신 1회
+    assert len(gets) == 2    # 재발급 후 재시도 1회 (재시도 루프가 더 돌지 않음)
+
+
+def test_price_401_then_success(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    responses = [FakeResp(401, None, "expired"), FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})]
+    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: responses.pop(0))
+    data = kis.build_current_price("005930", KEY, SECRET)
+    assert data["price"] == 78900
+    assert data["mock"] is False
+
+
+# ── 현재가: 데이터 실패 → 재시도 → stale → Mock ───────────────
+def test_current_price_normalizes_output(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
+    )
+    data = kis.build_current_price("005930", KEY, SECRET)
+    assert data["ticker"] == "005930"
+    assert data["market"] == "KOSPI200"
+    assert data["sector"] == "전기·전자"
+    assert data["price"] == 78900
+    assert data["change"] == 900
+    assert data["change_pct"] == 1.15
+    assert data["volume"] == 12345678
+    assert (data["source"], data["mock"], data["stale"]) == ("kis", False, False)
+
+
+def test_data_error_falls_back_to_mock_when_no_cache(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg_cd": "X", "msg1": "err"})
+    )
+    data = kis.build_current_price("005930", KEY, SECRET)
+    assert data["mock"] is True
+    assert data["source"] == "mock"
+    assert data["stale"] is False
+
+
+def test_data_error_falls_back_to_stale_cache(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    ok = FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
+    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: ok)
+    first = kis.build_current_price("005930", KEY, SECRET)
+    assert first["stale"] is False
+
+    kis._PRICE_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료시켜 재요청 유도
+    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    stale = kis.build_current_price("005930", KEY, SECRET)
+    assert stale["stale"] is True
+    assert stale["mock"] is False
+    assert stale["price"] == 78900  # 직전 실데이터 유지
+
+
+def test_data_error_retried(monkeypatch):
+    """데이터 실패는 재시도한다 (총 3회 시도)."""
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls = []
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+    )
+    kis.build_current_price("005930", KEY, SECRET)
+    assert len(calls) == kis._FETCH_RETRIES + 1
+
+
+def test_price_cache_ttl(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    calls = []
+    monkeypatch.setattr(
+        kis.requests,
+        "get",
+        lambda *a, **k: (calls.append(1), FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT}))[1],
+    )
+    kis.build_current_price("005930", KEY, SECRET)
+    kis.build_current_price("005930", KEY, SECRET)
+    assert len(calls) == 1  # TTL 내 두 번째는 캐시
+
+
+def test_mock_current_price_schema():
+    data = kis.mock_current_price("005930")
+    assert set(data) >= {"ticker", "price", "change_pct", "as_of", "source", "mock", "stale"}
+    assert data["mock"] is True
+
+
+# ── KISProvider 위임 + 나머지 stub 유지 ────────────────────────
+def test_provider_delegates_current_price(monkeypatch):
+    monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
+    monkeypatch.setattr(
+        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
+    )
+    assert KISProvider(KEY, SECRET).get_current_price("005930")["price"] == 78900
+
+
+def test_kis_provider_current_price_is_abc_method():
+    """get_current_price 가 StockProvider 인터페이스로 승격됐고 Mock 도 구현한다."""
+    from backend.core.providers import MockProvider, StockProvider
+
+    assert "get_current_price" in StockProvider.__abstractmethods__
+    px = MockProvider().get_current_price("005930")
+    assert set(px) >= {"ticker", "price", "change", "change_pct", "open", "high",
+                       "low", "volume", "as_of", "source", "mock", "stale"}
+    assert px["price"] > 0 and px["mock"] is True
