@@ -1,71 +1,127 @@
 # signal_service — 종목 매매신호 대시보드
 
-종목을 검색하면 여러 지표를 종합해 매수/매도 방향성을 알려주는 데이트레이딩 보조 도구.
+종목을 검색하면 여러 지표를 종합해 매수/매도 방향성을 알려주는 국내 주식 데이트레이딩 보조 도구.
 블랙박스가 아니라 **각 지표의 기여도를 전부 공개**하고 사용자가 **가중치를 직접 조절**한다.
-경제지표(매크로) 맥락과 매매 계획(리스크)까지 한 흐름으로 연결한다. 상세 설계는 [DESIGN.md](DESIGN.md).
+경제지표(매크로) 맥락과 매매 계획(리스크)까지 한 흐름으로 연결한다.
 
-## 스택
+- 상세 설계·스코어링 로직: [DESIGN.md](DESIGN.md)
+- UI 정보 구조·디자인 제약: [DESIGN_BRIEF.md](DESIGN_BRIEF.md)
 
-- **백엔드**: Python 3.12 · FastAPI · pandas/numpy (지표·스코어링 순수 함수, 외부 TA 라이브러리 미사용)
-- **프론트**: React · Vite
+이 문서는 "빠르게 이해하고 띄우는 법"만 다룬다.
 
-## 새 PC 세팅
+## 아키텍처 개요
 
-### 1. 클론
+```
+[KIS: 종목]  [FRED·ECOS: 경제지표]  [yfinance: 시세]
+     │              │                    │
+     ▼              ▼                    ▼
+┌──────────────────────────────────────────┐
+│  providers (backend/core/providers.py)    │
+│  StockProvider / MacroProvider (추상)      │
+│  KISProvider · MacroDataProvider · Mock   │
+└──────────────────────────────────────────┘
+                   │
+                   ▼
+        FastAPI (backend/api)  ◀── HTTP ──  React/Vite (frontend)
+```
+
+- **백엔드**: Python 3.12 · FastAPI · pandas/numpy. 지표(`core/indicators.py`)·스코어링(`core/scoring.py`)은
+  프레임워크 독립 순수 함수 — 외부 TA 라이브러리 미사용.
+- **프론트**: React · Vite.
+- **provider 추상화**: 라우트는 `StockProvider`/`MacroProvider` 인터페이스만 알고, 구체 구현(KIS 실데이터 vs Mock)은
+  `backend/api/deps.py`가 환경변수·키 유무를 보고 조립한다. 데이터 소스를 바꿔도 스코어링 로직은 그대로.
+- **Mock 폴백**: 키가 없으면 해당 소스가 자동으로 Mock으로 내려간다. `StockProvider`의 일곱 메서드는
+  전부 KIS 실연동이다. 단, **KIS 키가 있는데 인증에 실패하면 Mock으로 폴백하지 않고 에러**를
+  낸다 — 실데이터인 줄 알고 Mock을 보는 사고를 막기 위함.
+
+## 필요한 API 키
+
+전부 **선택**. 없으면 Mock으로 돌아간다([키 없이 돌리면](#키-없이-돌리면) 참조). 조회는 모두 무료.
+
+| 키 | 용도 | 발급처 |
+|----|------|--------|
+| `FRED_API_KEY` | 미국 경제지표 (CPI·금리 등) | https://fred.stlouisfed.org/docs/api/api_key.html |
+| `ECOS_API_KEY` | 한국 경제지표 (한국은행) | https://ecos.bok.or.kr/api/#/AuthKeyApply |
+| `KIS_APP_KEY` / `KIS_APP_SECRET` | 국내 종목 분봉·수급·호가 (한국투자증권) | https://apiportal.koreainvestment.com |
+
+설정은 `backend/.env`에 넣는다. **실제 키 값은 이 문서나 코드에 절대 커밋하지 말 것** —
+템플릿과 각 키의 주의사항은 [`backend/.env.example`](backend/.env.example)에 있다.
+
+```bash
+cp backend/.env.example backend/.env   # 그 뒤 필요한 키만 채우기
+```
+
+`KIS_ACCOUNT_NO`는 현재가 조회엔 불필요하다(주문·잔고 단계에서 사용).
+
+## 세팅
+
 ```bash
 git clone https://github.com/dksdbsk1024-netizen/signal_service.git
 cd signal_service
-```
 
-### 2. 백엔드
-```bash
+# 백엔드
 python -m venv .venv
-# Windows(PowerShell/Git Bash):
-.venv/Scripts/activate
-# macOS/Linux:
-# source .venv/bin/activate
-
+.venv/Scripts/activate        # Windows(PowerShell/Git Bash)
+# source .venv/bin/activate   # macOS/Linux
 pip install -r backend/requirements.txt
-```
 
-환경변수(선택): 실 경제지표를 쓸 때만 필요. 키가 없으면 Mock 데이터로 폴백해 앱은 그대로 구동된다.
-```bash
-cp backend/.env.example backend/.env   # 그 뒤 FRED_API_KEY / ECOS_API_KEY 채우기
-```
-
-### 3. 프론트
-```bash
-cd frontend
-npm install
+# 프론트
+cd frontend && npm install
 ```
 
 ## 실행
 
-터미널 2개.
+터미널 2개. **백엔드를 먼저 띄운다** — 프론트가 기동 직후 API를 호출한다.
 
 ```bash
-# 백엔드 (리포 루트에서)
-python -m uvicorn backend.api.main:app --port 8000
+# 1) 백엔드 (리포 루트에서)
+uvicorn backend.api.main:app --reload --port 8000
 
-# 프론트 (frontend/ 에서)
+# 2) 프론트 (frontend/ 에서)
 npm run dev
 ```
 
-- 프론트: http://localhost:5173 (포트 사용 중이면 Vite가 5174 등으로 자동 이동)
-- 백엔드 API: http://localhost:8000 (프론트 `src/ui.jsx`의 `API` 상수가 여기를 가리킴)
+- 프론트: **http://localhost:5173** ← 여기로 접속. (포트 사용 중이면 Vite가 5174 등으로 자동 이동)
+- 백엔드 API: http://localhost:8000 (프론트 `src/ui.jsx`의 `API` 상수가 이 주소를 가리킨다)
+
+## 환경 노브
+
+`backend/.env`에서 데이터 소스를 강제로 고정하는 스위치. 키가 있어도 네트워크를 안 타게 만들 때 쓴다.
+
+| 변수 | 기본값 | 의미 | 언제 쓰나 |
+|------|--------|------|-----------|
+| `STOCK_PROVIDER` | `auto` | `auto` = KIS 키 있으면 실데이터, 없으면 Mock. `mock` = 키가 있어도 강제 Mock. | 오프라인 개발, KIS 호출 한도 아끼기 |
+| `MACRO_LIVE_QUOTES` | `1` | 매크로 시세(yfinance) 네트워크 호출. `0` = Mock. | 오프라인 개발. yfinance는 키가 없어도 네트워크를 타므로 별도 노브가 필요 |
+
+경제지표(FRED·ECOS)는 노브 없이 **키 유무만으로** 실데이터/Mock이 갈린다.
 
 ## 테스트
 
 ```bash
-python -m pytest backend/ -q
+python -m pytest backend/tests -q
 ```
+
+**156개 통과.** `conftest.py`가 `STOCK_PROVIDER=mock`을 강제해 오프라인으로 격리된다 — 실 API 키가 있어도
+테스트는 네트워크를 타지 않는다.
+
+## 키 없이 돌리면
+
+`.env` 없이 그대로 실행해도 앱은 정상 구동된다. 각 데이터가 이렇게 폴백된다:
+
+- **종목**(분봉·수급·호가) → `MockProvider` (티커 시드 기반 결정론적 더미)
+- **경제지표**(FRED·ECOS) → Mock
+- **매크로 시세**(yfinance) → 키가 없어도 실호출됨. 끄려면 `MACRO_LIVE_QUOTES=0`
+
+UI·스코어링·차트를 그대로 확인할 수 있으니, 키 발급 전에 먼저 띄워보고 구조를 파악하면 된다.
 
 ## 프로젝트 구조
 
 ```
 backend/
-  core/         지표(indicators)·스코어링(scoring)·설정(config)·매크로
+  core/         지표(indicators)·스코어링(scoring)·설정(config)·매크로(macro)·provider 정의
+  api/deps.py   provider 조립 (환경변수·키 유무 → 실데이터 or Mock)
   api/routes/   FastAPI 엔드포인트 (signal·technical·flow·macro·screener)
+  scripts/      KIS 실 API 수동 점검 스크립트 (앱을 거치지 않고 KISProvider 직접 호출)
   tests/        pytest
 frontend/
   src/tabs/            탭별 화면 (앱 소스 — Vite가 직접 번들)
