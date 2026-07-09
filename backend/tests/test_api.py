@@ -3,15 +3,24 @@
 from fastapi.testclient import TestClient
 
 from backend.api.main import app
-from backend.api.deps import get_macro_provider
-from backend.core.providers import MacroDataProvider
 
-# /macro 테스트는 네트워크(FRED·yfinance) 대신 키 없는 + live_quotes=False 로 강제 →
-# 경제지표는 core.macro Mock, 시세는 core.quotes Mock 폴백 → CI 안정·오프라인, 스키마 동일.
-app.dependency_overrides[get_macro_provider] = lambda: MacroDataProvider(None, live_quotes=False)
-
+# /macro 의 오프라인 강제는 conftest 의 환경변수(FRED/ECOS 빈 키 + MACRO_LIVE_QUOTES=0)가
+# 한다 — 여기서 dependency_overrides 로 막으면 그 가드가 뚫려도 아무 테스트가 못 잡는다.
 client = TestClient(app)
 TICKER = "005930"
+
+
+def test_macro_provider_is_offline_under_pytest():
+    """conftest 의 매크로 오프라인 강제. 실패하면 테스트가 실 FRED/ECOS/yfinance 를 때린다.
+
+    셋 다 봐야 한다 — 키를 비워도 yfinance 시세는 네트워크를 탄다.
+    """
+    from backend.api import deps
+
+    assert not deps.MACRO_PROVIDER.fred_key
+    assert not deps.MACRO_PROVIDER.ecos_key
+    assert deps.MACRO_PROVIDER.live_quotes is False
+    assert deps.MACRO_SOURCE == "mock"
 
 
 def test_health():

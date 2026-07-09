@@ -29,7 +29,10 @@ PROVIDER = MockProvider()
 # 지표 카드마다 source("fred"|"ecos"|"mock")를 실어 프론트가 소스를 구분 표시한다.
 _FRED_KEY = os.getenv("FRED_API_KEY")
 _ECOS_KEY = os.getenv("ECOS_API_KEY")
-MACRO_PROVIDER = MacroDataProvider(_FRED_KEY, _ECOS_KEY)
+# 시세(yfinance)는 키가 없어도 네트워크를 탄다 → 키 비우기만으론 오프라인이 안 된다.
+# MACRO_LIVE_QUOTES=0 이 pytest·오프라인 개발용 노브다.
+_LIVE_QUOTES = os.getenv("MACRO_LIVE_QUOTES", "1").strip().lower() not in ("0", "false", "mock")
+MACRO_PROVIDER = MacroDataProvider(_FRED_KEY, _ECOS_KEY, live_quotes=_LIVE_QUOTES)
 # 상단 배지용 종합 상태: 실데이터 키가 하나라도 있으면 "live", 없으면 "mock".
 MACRO_SOURCE = "live" if (_FRED_KEY or _ECOS_KEY) else "mock"
 
