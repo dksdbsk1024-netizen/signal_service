@@ -1,4 +1,4 @@
-"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV.
+"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV + 호가(Level 2).
 
 core.macro / core.quotes 와 같은 역할 분담: HTTP·캐시·재시도·폴백은 이 모듈이 맡고,
 providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독립.
@@ -21,6 +21,13 @@ providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독
     240봉을 채우려면 기준시각(FID_INPUT_HOUR_1)을 과거로 밀며 페이징해야 한다.
     장 시작 전이나 휴장일에는 응답이 비고, 그건 데이터 실패로 취급해 Mock 으로 폴백한다.
     과거 영업일 분봉은 다른 TR(FHKST03010230)이며 이번 범위 밖.
+
+호가:
+    FHKST01010200 은 1회 호출로 10호가 전부(askp1~10 / bidp1~10 + 각 잔량)를 준다.
+    페이징이 없다. 장 마감 후·휴장일에는 가격이 전부 "0" 으로 오고, 이는 응답 성공
+    (rt_cd=0)이지만 호가가 없는 상태다 — 데이터 실패로 취급해 Mock 으로 폴백한다.
+    체결강도(cttr)는 **이 응답에도 현재가 응답에도 없다.** 별도 TR(FHKST01010300,
+    주식현재가 체결)의 tday_rltv 이며 이번 범위 밖 — get_trade_strength 는 아직 Mock.
 """
 
 from __future__ import annotations
@@ -43,11 +50,14 @@ BASE = "https://openapi.koreainvestment.com:9443"
 TOKEN_PATH = "/oauth2/tokenP"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 MINUTE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
 
 # 국내주식 현재가 시세 조회 거래ID.
 TR_CURRENT_PRICE = "FHKST01010100"
 # 국내주식 당일 분봉 조회 거래ID.
 TR_MINUTE_OHLCV = "FHKST03010200"
+# 국내주식 호가/예상체결 조회 거래ID.
+TR_ORDERBOOK = "FHKST01010200"
 
 # 현재가는 실시간성이 생명 — macro.CACHE_TTL_SEC(20분)를 재사용하면 안 된다.
 # 10초: 새로고침 연타로 API 호출량이 튀는 것만 막고 체감 지연은 없게.
@@ -56,6 +66,12 @@ PRICE_CACHE_TTL_SEC = 10
 # 분봉 1건은 240봉 채우는 데 8회 호출이 든다. 봉은 1분에 한 번만 바뀌므로
 # 30초 TTL 이면 새 봉을 최대 30초 늦게 보는 대신 호출량이 8배로 튀지 않는다.
 OHLCV_CACHE_TTL_SEC = 30
+
+# 호가 잔량은 초 단위로 바뀐다 — 현재가의 10초 TTL 을 쓰면 호가창이 눈에 띄게 굳는다.
+# 3초: 새로고침 연타만 흡수하고 체감 지연은 없게.
+ORDERBOOK_CACHE_TTL_SEC = 3
+
+ORDERBOOK_LEVELS = 10            # KIS 가 주는 호가 단계 수(고정). MockProvider 와 동일.
 
 DEFAULT_MINUTE_BARS = 240        # MockProvider.bars 와 동일
 _MINUTE_MAX_PAGES = 12           # 12 × 30봉 = 360봉. 정규장(09:00~15:30) 391분을 거의 덮는다.
@@ -100,6 +116,9 @@ _PRICE_CACHE: dict[str, dict] = {}
 
 # (ticker, interval) → {"data": DataFrame, "ts": epoch_seconds}
 _OHLCV_CACHE: dict[tuple[str, str], dict] = {}
+
+# ticker → {"data": orderbook_dict, "ts": epoch_seconds}
+_ORDERBOOK_CACHE: dict[str, dict] = {}
 
 # {"access_token": str, "expires_at": epoch_seconds} 또는 빈 dict.
 _TOKEN: dict = {}
@@ -570,3 +589,162 @@ def build_minute_ohlcv(
     df = _to_frame(rows, step).tail(bars)
     _OHLCV_CACHE[key] = {"data": df, "ts": now}
     return _tagged(df.copy(), source="kis", stale=False, mock=False)
+
+
+# ── 호가 (Level 2) ─────────────────────────────────────────────
+def _copy_book(book: dict) -> dict:
+    """캐시본 반환용 복사. asks/bids 는 중첩 리스트라 dict() 로는 캐시와 공유된다."""
+    out = dict(book)
+    out["asks"] = [dict(r) for r in book["asks"]]
+    out["bids"] = [dict(r) for r in book["bids"]]
+    return out
+
+
+def _fetch_orderbook(ticker: str, token: str, app_key: str, app_secret: str) -> dict:
+    """GET inquire-asking-price-exp-ccn → `output1` dict 원본(10호가 + 총잔량).
+
+    `output2`(예상체결)는 장 시작 전·마감 동시호가 때만 의미가 있어 쓰지 않는다.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE}{ORDERBOOK_PATH}",
+            headers={
+                "authorization": f"Bearer {token}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": TR_ORDERBOOK,
+                "custtype": "P",
+            },
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise KISDataError(f"KIS 호가 요청 실패: {e}") from e
+
+    if resp.status_code in (401, 403):
+        raise KISAuthError(f"KIS 인증 거부 (HTTP {resp.status_code}): {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise KISDataError(f"KIS 호가 HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as e:
+        raise KISDataError(f"KIS 호가 응답 파싱 실패: {e}") from e
+
+    if body.get("rt_cd") != "0":
+        raise KISDataError(
+            f"KIS 호가 오류: {body.get('msg_cd')} {body.get('msg1')}",
+            msg_cd=str(body.get("msg_cd", "")),
+            msg1=str(body.get("msg1", "")),
+        )
+
+    output = body.get("output1") or {}
+    if not output.get("askp1"):
+        raise KISDataError(f"KIS 호가 응답에 askp1 없음 (ticker={ticker})")
+    return output
+
+
+def _orderbook_as_of(output: dict) -> str:
+    """aspr_acpt_hour(HHMMSS, 호가 접수 시각) → "YYYY-MM-DD HH:MM:SS KST".
+
+    현재가와 달리 초까지 남긴다 — 호가는 초 단위로 갱신되므로 분 단위면 두 스냅샷을
+    구분할 수 없다. 날짜는 응답에 없어 수신 시각(KST)의 날짜를 쓴다.
+    """
+    now = datetime.datetime.now(KST)
+    hhmmss = str(output.get("aspr_acpt_hour") or "")
+    if len(hhmmss) == 6 and hhmmss.isdigit():
+        return f"{now:%Y-%m-%d} {hhmmss[:2]}:{hhmmss[2:4]}:{hhmmss[4:]} KST"
+    return now.strftime("%Y-%m-%d %H:%M:%S KST")
+
+
+def _normalize_orderbook(ticker: str, output: dict) -> dict:
+    """KIS output1 → 앱 스키마(MockProvider.get_orderbook 과 동일한 asks/bids/as_of).
+
+    국내 관습대로 **asks[0] 가 최우선 매도호가(askp1, 가장 싼 매도)**, bids[0] 가
+    최우선 매수호가(bidp1, 가장 비싼 매수)다. Mock 도 mid 에서 1틱씩 멀어지는 순서로
+    같은 규약을 쓴다. 화면상 "매도 위 / 매수 아래" 배치는 프론트가 가격 내림차순으로
+    정렬해 만든다 — 여기서 뒤집지 않는다.
+
+    호가가 없는 시간대(장 마감 후·휴장일)에는 KIS 가 rt_cd=0 으로 응답하면서 가격을
+    전부 "0" 으로 준다. 잔량 0 짜리 호가창을 그리는 대신 데이터 실패로 올린다.
+    """
+    asks, bids = [], []
+    for i in range(1, ORDERBOOK_LEVELS + 1):
+        asks.append({"price": _to_int(output.get(f"askp{i}")),
+                     "qty": _to_int(output.get(f"askp_rsqn{i}"))})
+        bids.append({"price": _to_int(output.get(f"bidp{i}")),
+                     "qty": _to_int(output.get(f"bidp_rsqn{i}"))})
+
+    if asks[0]["price"] <= 0 and bids[0]["price"] <= 0:
+        raise KISDataError(
+            f"KIS 호가 전 단계가 0 (ticker={ticker}) — 장 마감 후·휴장일에는 호가가 없습니다"
+        )
+
+    return {
+        "ticker": ticker,
+        "asks": asks,
+        "bids": bids,
+        # KIS 가 계산해 주는 총잔량. 실응답 확인 결과 10호가 잔량 합과 정확히 같다
+        # (시간외 잔량은 ovtm_total_* 로 따로 온다). 합이 어긋나면 필드 매핑이 틀린 것.
+        "total_ask_qty": _to_int(output.get("total_askp_rsqn")),
+        "total_bid_qty": _to_int(output.get("total_bidp_rsqn")),
+        "as_of": _orderbook_as_of(output),
+        "source": "kis",
+        "mock": False,
+        "stale": False,
+    }
+
+
+def mock_orderbook(ticker: str) -> dict:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    book = MockProvider().get_orderbook(ticker)
+    book.update({
+        "ticker": ticker,
+        "total_ask_qty": sum(r["qty"] for r in book["asks"]),
+        "total_bid_qty": sum(r["qty"] for r in book["bids"]),
+        "source": "mock",   # UI 배지: 실데이터 아님
+        "mock": True,
+        "stale": False,
+    })
+    return book
+
+
+def build_orderbook(ticker: str, app_key: str, app_secret: str) -> dict:
+    """10호가. build_current_price 와 같은 4단 폴백: 캐시 → KIS → stale 캐시 → Mock.
+
+    인증 실패(KISAuthError)만은 폴백 없이 그대로 던진다.
+    """
+    now = time.time()
+    cached = _ORDERBOOK_CACHE.get(ticker)
+    if cached and now - cached["ts"] < ORDERBOOK_CACHE_TTL_SEC:
+        return _copy_book(cached["data"])
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False  # 401 로 인한 강제 갱신은 호출당 1회만
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return _normalize_orderbook(ticker, _fetch_orderbook(ticker, token, app_key, app_secret))
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return _normalize_orderbook(ticker, _fetch_orderbook(ticker, token, app_key, app_secret))
+
+    try:
+        data = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            stale = _copy_book(cached["data"])
+            stale["stale"] = True
+            return stale
+        return mock_orderbook(ticker)
+
+    _ORDERBOOK_CACHE[ticker] = {"data": data, "ts": now}
+    return _copy_book(data)

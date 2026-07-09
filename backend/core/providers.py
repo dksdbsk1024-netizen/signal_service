@@ -238,7 +238,7 @@ class MockProvider(StockProvider, MacroProvider):
 
 # ── 실연동 ─────────────────────────────────────────────────────
 class KISProvider(StockProvider):
-    """한국투자증권 KIS API 연동. 현재가·분봉 실연동 — 나머지는 아직 골격."""
+    """한국투자증권 KIS API 연동. 현재가·분봉·호가 실연동 — 수급은 아직 골격."""
 
     def __init__(self, app_key: str, app_secret: str, account: str = ""):
         self.app_key = app_key
@@ -266,7 +266,13 @@ class KISProvider(StockProvider):
         raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
 
     def get_orderbook(self, ticker: str) -> dict:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """10호가 + 잔량. MockProvider 와 동일 스키마 + source/mock/stale 플래그.
+
+        캐시·재시도·stale 폴백은 core.kis 가 처리한다. 장 마감 후·휴장일엔 KIS 가
+        가격 0 을 주므로 Mock 으로 폴백한다(book["mock"] is True).
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_orderbook(ticker, self.app_key, self.app_secret)
 
     def get_trade_strength(self, ticker: str) -> dict:
         raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
