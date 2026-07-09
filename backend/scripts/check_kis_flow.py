@@ -1,6 +1,6 @@
 """KIS 수급(외국인·기관·프로그램) 실연동 단독 검증 — 진짜 수급인지, 부호·단위가 맞는지.
 
-앱(deps.PROVIDER)은 여전히 Mock 이다. 이 스크립트는 KISProvider 만 직접 찔러본다.
+앱(deps.PROVIDER)을 거치지 않고 KISProvider 를 직접 찔러본다 — STOCK_PROVIDER 설정과 무관하다.
 
     python -m backend.scripts.check_kis_flow          # 삼성전자 005930
     python -m backend.scripts.check_kis_flow 000660   # SK하이닉스
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -78,7 +79,8 @@ def main(ticker: str = DEFAULT_TICKER) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    load_dotenv()  # backend/.env
+    # 인자 없는 load_dotenv() 는 REPL·디버거에서 cwd 기준으로 바뀐다 (api.deps 와 동일).
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     app_key = os.getenv("KIS_APP_KEY", "")
     app_secret = os.getenv("KIS_APP_SECRET", "")
     if not app_key or not app_secret:
