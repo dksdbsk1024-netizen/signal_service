@@ -7,6 +7,7 @@ provider를 모듈 싱글턴으로 두어 라우트가 데이터 소스에 직�
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -15,7 +16,10 @@ from ..core.indicators import IndicatorSet, compute_indicators
 from ..core.providers import MacroDataProvider, MockProvider
 
 # backend/.env 로드 (FRED_API_KEY 등). 이미 환경에 있으면 유지.
-load_dotenv()
+# 인자 없는 load_dotenv() 는 보통 이 파일 기준으로 상위를 훑어 backend/.env 를 찾지만,
+# REPL·`python -c`·디버거(sys.gettrace)·frozen 에서는 cwd 기준으로 바뀐다. 리포 루트에는
+# .env 가 없어 그때 조용히 Mock 으로 떨어진다 → 경로를 파일 기준으로 고정한다.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # 종목 데이터: 개발/UI 테스트용 결정적 합성. 실연동 시 KISProvider 로 교체.
 PROVIDER = MockProvider()
