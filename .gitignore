@@ -3,6 +3,9 @@
 *.env
 !.env.example
 
+# KIS OAuth 토큰 캐시 (core.kis 가 자동 생성, 24h 유효)
+.kis_token.json
+
 # Python
 __pycache__/
 *.py[cod]
