@@ -1,5 +1,6 @@
 """FastAPI 엔드포인트 — TestClient 스모크 + 스키마 키 검증."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.main import app
@@ -56,6 +57,17 @@ def test_signal_entry_override_changes_plan():
     override = client.get(f"/api/signal/{TICKER}?entry=99999").json()["trade_plan"]
     assert override["entry"] == 99999
     assert override["stop"] != base["stop"]
+
+
+@pytest.mark.parametrize("interval", ["1m", "5m"])
+def test_technical_accepts_supported_intervals(interval):
+    assert client.get(f"/api/technical/{TICKER}?interval={interval}").status_code == 200
+
+
+@pytest.mark.parametrize("interval", ["1d", "1h", "abc", "", "1m; drop"])
+def test_technical_rejects_bad_interval_with_422(interval):
+    """검증 없이 넘기면 KIS 경로에서 ValueError → 500. 422로 막는다."""
+    assert client.get(f"/api/technical/{TICKER}?interval={interval}").status_code == 422
 
 
 def test_technical_schema():

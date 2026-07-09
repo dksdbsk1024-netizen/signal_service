@@ -59,6 +59,10 @@ VOL_LOOKBACK = 20  # 거래량 급증 판정 기준 이동평균 기간
 OBV_LOOKBACK = 20  # OBV 다이버전스 판정 창
 ATR_BAND_MULT = 2.0  # ATR밴드 폭 배수 (중심 SMA ± mult×ATR)
 
+# 분봉 interval — KIS는 1분봉만 주고 그 위는 resample. 일봉(1d)은 별도 TR이라 미지원.
+SUPPORTED_INTERVALS: tuple[str, ...] = ("1m", "5m")
+INTERVAL_PATTERN = "^(1m|5m)$"
+
 # ── 카테고리 내부 세부지표 가중치 ──────────────────────────────
 # 각 카테고리 점수 = 세부지표 점수의 가중평균(사용 시 카테고리 내 합=1로 재정규화).
 # 전부 1.0 = 단순평균과 동일 → 미변경 카테고리(trend/momentum/volume) 결과 불변.

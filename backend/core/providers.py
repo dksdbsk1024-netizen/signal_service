@@ -238,7 +238,7 @@ class MockProvider(StockProvider, MacroProvider):
 
 # ── 실연동 ─────────────────────────────────────────────────────
 class KISProvider(StockProvider):
-    """한국투자증권 KIS API 연동. 현재가부터 붙인다 — 나머지는 아직 골격."""
+    """한국투자증권 KIS API 연동. 현재가·분봉 실연동 — 나머지는 아직 골격."""
 
     def __init__(self, app_key: str, app_secret: str, account: str = ""):
         self.app_key = app_key
@@ -254,7 +254,13 @@ class KISProvider(StockProvider):
         return kis.build_current_price(ticker, self.app_key, self.app_secret)
 
     def get_minute_ohlcv(self, ticker: str, interval: str = "1m") -> pd.DataFrame:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """당일 분봉. MockProvider 와 동일 스키마 + `df.attrs` 에 source/mock/stale.
+
+        캐시·페이징·재시도·stale 폴백은 core.kis 가 처리한다. 장 시작 전·휴장일엔
+        KIS 가 빈 응답을 주므로 Mock 으로 폴백한다(attrs["mock"] is True).
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_minute_ohlcv(ticker, self.app_key, self.app_secret, interval)
 
     def get_investor_flow(self, ticker: str) -> dict:
         raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")

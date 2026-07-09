@@ -29,7 +29,8 @@ def _clean(series: pd.Series) -> list:
 @router.get("/technical/{ticker}")
 def get_technical(
     ticker: str,
-    interval: str = Query("1m"),
+    # 검증 없이 넘기면 KIS 경로에서 ValueError → 500. 여기서 걸러 422로 돌려준다.
+    interval: str = Query("1m", pattern=config.INTERVAL_PATTERN),
     bars: int = Query(120, ge=20, le=480),
 ):
     provider = get_provider()

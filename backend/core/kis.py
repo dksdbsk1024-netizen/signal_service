@@ -1,4 +1,4 @@
-"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가.
+"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV.
 
 core.macro / core.quotes 와 같은 역할 분담: HTTP·캐시·재시도·폴백은 이 모듈이 맡고,
 providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독립.
@@ -15,6 +15,12 @@ providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독
     발급된 토큰은 약 24시간 유효하다. 메모리 캐시만 쓰면 프로세스 재시작이나
     `uvicorn --reload` 가 1분 안에 두 번 걸리는 순간 발급이 막히므로,
     토큰을 디스크(TOKEN_FILE)에도 저장해 재시작을 넘어 재사용한다.
+
+분봉:
+    FHKST03010200 은 **호출 1회당 최대 30봉**, 그리고 **당일 장중 데이터만** 준다.
+    240봉을 채우려면 기준시각(FID_INPUT_HOUR_1)을 과거로 밀며 페이징해야 한다.
+    장 시작 전이나 휴장일에는 응답이 비고, 그건 데이터 실패로 취급해 Mock 으로 폴백한다.
+    과거 영업일 분봉은 다른 TR(FHKST03010230)이며 이번 범위 밖.
 """
 
 from __future__ import annotations
@@ -23,9 +29,11 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
+import pandas as pd
 import requests
 
 from .macro import _FETCH_RETRIES, _RETRY_BACKOFF_SEC  # 재시도 상수 재사용
@@ -34,13 +42,25 @@ from .macro import _FETCH_RETRIES, _RETRY_BACKOFF_SEC  # 재시도 상수 재사
 BASE = "https://openapi.koreainvestment.com:9443"
 TOKEN_PATH = "/oauth2/tokenP"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
+MINUTE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
 
 # 국내주식 현재가 시세 조회 거래ID.
 TR_CURRENT_PRICE = "FHKST01010100"
+# 국내주식 당일 분봉 조회 거래ID.
+TR_MINUTE_OHLCV = "FHKST03010200"
 
 # 현재가는 실시간성이 생명 — macro.CACHE_TTL_SEC(20분)를 재사용하면 안 된다.
 # 10초: 새로고침 연타로 API 호출량이 튀는 것만 막고 체감 지연은 없게.
 PRICE_CACHE_TTL_SEC = 10
+
+# 분봉 1건은 240봉 채우는 데 8회 호출이 든다. 봉은 1분에 한 번만 바뀌므로
+# 30초 TTL 이면 새 봉을 최대 30초 늦게 보는 대신 호출량이 8배로 튀지 않는다.
+OHLCV_CACHE_TTL_SEC = 30
+
+DEFAULT_MINUTE_BARS = 240        # MockProvider.bars 와 동일
+_MINUTE_MAX_PAGES = 12           # 12 × 30봉 = 360봉. 정규장(09:00~15:30) 391분을 거의 덮는다.
+_MARKET_OPEN_HOUR = 9
+_MARKET_CLOSE = "153000"
 
 # 토큰 캐시 파일. backend/.kis_token.json (gitignore). 프로세스 재시작 넘어 재사용.
 TOKEN_FILE = Path(__file__).resolve().parents[1] / ".kis_token.json"
@@ -77,6 +97,9 @@ class KISDataError(KISError):
 # ── 캐시 (프로세스 수명) ───────────────────────────────────────
 # ticker → {"data": price_dict, "ts": epoch_seconds}
 _PRICE_CACHE: dict[str, dict] = {}
+
+# (ticker, interval) → {"data": DataFrame, "ts": epoch_seconds}
+_OHLCV_CACHE: dict[tuple[str, str], dict] = {}
 
 # {"access_token": str, "expires_at": epoch_seconds} 또는 빈 dict.
 _TOKEN: dict = {}
@@ -357,3 +380,193 @@ def build_current_price(ticker: str, app_key: str, app_secret: str) -> dict:
     data = _normalize(ticker, output)
     _PRICE_CACHE[ticker] = {"data": data, "ts": now}
     return dict(data)
+
+
+# ── 분봉 OHLCV ─────────────────────────────────────────────────
+_OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
+_RESAMPLE_AGG = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+
+
+def _interval_minutes(interval: str) -> int:
+    """"1m"/"5m" → 1/5. KIS 가 주는 건 1분봉뿐이라 그 위는 resample 로 만든다."""
+    m = re.fullmatch(r"(\d+)m", interval.strip())
+    if not m or int(m.group(1)) < 1:
+        raise ValueError(f"지원하지 않는 interval: {interval!r} (예: '1m', '5m')")
+    return int(m.group(1))
+
+
+def _tagged(df: pd.DataFrame, *, source: str, stale: bool, mock: bool) -> pd.DataFrame:
+    """DataFrame 에는 source/mock/stale 을 담을 자리가 없어 attrs 로 붙인다.
+
+    현재가 dict 의 동명 플래그와 같은 규약. `.tail()`/`.copy()` 를 지나도 살아남는다.
+    """
+    df.attrs.update({"source": source, "mock": mock, "stale": stale})
+    return df
+
+
+def _initial_hour() -> str:
+    """페이징 시작 기준시각(HHMMSS). 장 마감 뒤엔 15:30 부터 거슬러 올라간다."""
+    now = datetime.datetime.now(KST)
+    hhmmss = now.strftime("%H%M%S")
+    return _MARKET_CLOSE if hhmmss > _MARKET_CLOSE else hhmmss
+
+
+def _parse_bar(row: dict) -> tuple | None:
+    """KIS output2 한 행 → (ts, o, h, l, c, v). 필수 필드가 없으면 None(그 행만 버림)."""
+    date, hour, close = row.get("stck_bsop_date"), row.get("stck_cntg_hour"), row.get("stck_prpr")
+    if not date or not hour or not close:
+        return None
+    try:
+        ts = datetime.datetime.strptime(f"{date}{hour}", "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    return (
+        ts,
+        _to_float(row.get("stck_oprc")),
+        _to_float(row.get("stck_hgpr")),
+        _to_float(row.get("stck_lwpr")),
+        _to_float(close),
+        _to_float(row.get("cntg_vol")),  # 해당 봉의 체결 거래량(누적 아님)
+    )
+
+
+def _fetch_minute_page(ticker: str, hhmmss: str, token: str, app_key: str, app_secret: str) -> list[dict]:
+    """GET inquire-time-itemchartprice → output2(최대 30봉, 최신→과거). 빈 리스트 가능."""
+    try:
+        resp = requests.get(
+            f"{BASE}{MINUTE_PATH}",
+            headers={
+                "authorization": f"Bearer {token}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": TR_MINUTE_OHLCV,
+                "custtype": "P",
+            },
+            params={
+                "FID_ETC_CLS_CODE": "",
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": ticker,
+                "FID_INPUT_HOUR_1": hhmmss,   # 이 시각 이전 30봉
+                "FID_PW_DATA_INCU_YN": "N",   # 시간외단일가 제외 — 정규장 봉만
+            },
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise KISDataError(f"KIS 분봉 요청 실패: {e}") from e
+
+    if resp.status_code in (401, 403):
+        raise KISAuthError(f"KIS 인증 거부 (HTTP {resp.status_code}): {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise KISDataError(f"KIS 분봉 HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as e:
+        raise KISDataError(f"KIS 분봉 응답 파싱 실패: {e}") from e
+
+    if body.get("rt_cd") != "0":
+        raise KISDataError(
+            f"KIS 분봉 오류: {body.get('msg_cd')} {body.get('msg1')}",
+            msg_cd=str(body.get("msg_cd", "")),
+            msg1=str(body.get("msg1", "")),
+        )
+    return body.get("output2") or []
+
+
+def _fetch_minute_series(ticker: str, need: int, token: str, app_key: str, app_secret: str) -> list[tuple]:
+    """`need` 개 이상의 1분봉을 모을 때까지 기준시각을 과거로 밀며 페이징.
+
+    한 응답이 30봉뿐이라 240봉엔 8회 호출이 필요하다. 중복 봉은 ts 키로 덮어쓴다.
+    장 시작(09:00) 이전으로 내려가거나 새 봉이 안 늘면 멈춘다 — 무한 페이징 방지.
+    """
+    bars: dict[datetime.datetime, tuple] = {}
+    hour = _initial_hour()
+
+    for _ in range(_MINUTE_MAX_PAGES):
+        rows = _fetch_minute_page(ticker, hour, token, app_key, app_secret)
+        if not rows:
+            break
+        before = len(bars)
+        for row in rows:
+            parsed = _parse_bar(row)
+            if parsed:
+                bars[parsed[0]] = parsed
+        if len(bars) == before or len(bars) >= need:
+            break  # 더 과거로 못 감 / 충분히 모음
+        earliest = min(bars) - datetime.timedelta(minutes=1)
+        if earliest.hour < _MARKET_OPEN_HOUR:
+            break
+        hour = earliest.strftime("%H%M%S")
+
+    if not bars:
+        raise KISDataError(
+            f"KIS 분봉 데이터 없음 (ticker={ticker}) — 당일 장중 데이터만 제공됩니다"
+        )
+    return [bars[ts] for ts in sorted(bars)]
+
+
+def _to_frame(rows: list[tuple], step: int) -> pd.DataFrame:
+    """(ts,o,h,l,c,v) 리스트 → MockProvider 와 동일 스키마의 DataFrame."""
+    idx = pd.DatetimeIndex([r[0] for r in rows])
+    df = pd.DataFrame([r[1:] for r in rows], columns=_OHLCV_COLUMNS, index=idx, dtype=float)
+    if step > 1:
+        # KIS 는 1분봉만 준다. stck_cntg_hour 는 봉의 **시작** 시각이다 — 장 첫 봉이
+        # 090000 이고 거기에 시가 단일가 체결량이 통째로 실려 온다. 그래서 왼쪽 닫힘/왼쪽 라벨.
+        df = df.resample(f"{step}min", label="left", closed="left").agg(_RESAMPLE_AGG).dropna()
+    return df
+
+
+def mock_minute_ohlcv(
+    ticker: str, interval: str = "1m", bars: int = DEFAULT_MINUTE_BARS
+) -> pd.DataFrame:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    df = MockProvider(bars=bars).get_minute_ohlcv(ticker, interval)
+    return _tagged(df, source="mock", stale=False, mock=True)
+
+
+def build_minute_ohlcv(
+    ticker: str,
+    app_key: str,
+    app_secret: str,
+    interval: str = "1m",
+    bars: int = DEFAULT_MINUTE_BARS,
+) -> pd.DataFrame:
+    """분봉 OHLCV. build_current_price 와 같은 4단 폴백: 캐시 → KIS → stale → Mock.
+
+    인증 실패(KISAuthError)만은 폴백 없이 그대로 던진다.
+    """
+    step = _interval_minutes(interval)  # interval 오류는 폴백 대상이 아님 — 즉시 ValueError
+    key = (ticker, interval)
+    now = time.time()
+    cached = _OHLCV_CACHE.get(key)
+    if cached and now - cached["ts"] < OHLCV_CACHE_TTL_SEC:
+        return _tagged(cached["data"].copy(), source="kis", stale=False, mock=False)
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False  # 401 로 인한 강제 갱신은 호출당 1회만
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return _fetch_minute_series(ticker, bars * step, token, app_key, app_secret)
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return _fetch_minute_series(ticker, bars * step, token, app_key, app_secret)
+
+    try:
+        rows = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            return _tagged(cached["data"].copy(), source="kis", stale=True, mock=False)
+        return mock_minute_ohlcv(ticker, interval, bars)
+
+    df = _to_frame(rows, step).tail(bars)
+    _OHLCV_CACHE[key] = {"data": df, "ts": now}
+    return _tagged(df.copy(), source="kis", stale=False, mock=False)
