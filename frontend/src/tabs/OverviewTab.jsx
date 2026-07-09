@@ -96,7 +96,7 @@ export default function OverviewTab({ ticker }) {
 
       <Card style={{ padding: "var(--space-5) var(--space-6)" }}>
         {StockHeader && (
-          <StockHeader name={name} ticker={header.ticker} price={header.price} changePct={header.change_pct} changeAmt={header.change} volume={fmtVolume(header.volume)} marketStatus="closed" />
+          <StockHeader name={name} ticker={header.ticker} price={header.price} changePct={header.change_pct} changeAmt={header.change} volume={fmtVolume(header.volume)} marketStatus={header.market_status} />
         )}
       </Card>
 

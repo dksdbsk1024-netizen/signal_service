@@ -20,7 +20,7 @@ def get_signal(
     entry: float | None = Query(None, description="진입가(미지정 시 현재가)"),
     direction: str = Query("long", pattern="^(long|short)$"),
 ):
-    ohlcv, _flow, ind = load_indicators(ticker)
+    _ohlcv, _flow, ind = load_indicators(ticker)
     result = scoring.score_stock(ind)
 
     entry_price = entry if entry is not None else ind.last_close
@@ -29,7 +29,7 @@ def get_signal(
 
     return {
         "ticker": ticker,
-        "header": stock_header(ticker, ohlcv),
+        "header": stock_header(ticker),
         "signal": {
             "final_score": result.final_score,
             "label": result.label,

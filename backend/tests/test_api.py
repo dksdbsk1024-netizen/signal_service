@@ -47,7 +47,8 @@ def test_signal_schema():
     assert "stop" in plan and "targets" in plan
     assert plan["position"]["qty"] >= 0
     # 헤더
-    assert {"price", "change_pct", "volume"} <= set(body["header"])
+    assert {"price", "change_pct", "volume", "source", "mock"} <= set(body["header"])
+    assert body["header"]["market_status"] in {"open", "after", "closed"}
 
 
 def test_signal_entry_override_changes_plan():

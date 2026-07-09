@@ -6,6 +6,7 @@ provider를 모듈 싱글턴으로 두어 라우트가 데이터 소스에 직�
 
 from __future__ import annotations
 
+import datetime
 import os
 from pathlib import Path
 
@@ -54,20 +55,45 @@ def load_indicators(ticker: str) -> tuple[pd.DataFrame, dict, IndicatorSet]:
     return ohlcv, flow, ind
 
 
-def stock_header(ticker: str, ohlcv: pd.DataFrame) -> dict:
-    """StockHeader 컴포넌트용 종목 요약 스트립."""
-    last = float(ohlcv["close"].iloc[-1])
-    first = float(ohlcv["open"].iloc[0])
-    change = last - first
-    change_pct = (change / first * 100) if first else 0.0
+_KST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def market_status() -> str:
+    """StockHeader 배지용: open(정규장) | after(시간외) | closed.
+
+    KRX 휴장일은 모른다 — 휴장일이면 KIS 가 빈 응답을 주고 provider 가 Mock 으로
+    폴백하므로, 배지보다 header["mock"] 이 더 정확한 신선도 신호다.
+    """
+    now = datetime.datetime.now(_KST)
+    if now.weekday() >= 5:  # 토·일
+        return "closed"
+    hhmm = now.hour * 100 + now.minute
+    if 900 <= hhmm < 1530:
+        return "open"
+    if 1530 <= hhmm < 1800:
+        return "after"
+    return "closed"
+
+
+def stock_header(ticker: str) -> dict:
+    """StockHeader 컴포넌트용 종목 요약 스트립.
+
+    분봉 파생이 아니라 현재가 스냅샷(KIS 면 실시간)을 쓴다. 등락은 KIS 기준
+    전일 종가 대비, Mock 은 당일 시가 대비다(MockProvider.get_current_price).
+    """
+    px = PROVIDER.get_current_price(ticker)
     return {
         "ticker": ticker,
-        "price": round(last, 1),
-        "change": round(change, 1),
-        "change_pct": round(change_pct, 2),
-        "volume": int(ohlcv["volume"].sum()),
-        "day_open": round(first, 1),
-        "day_high": round(float(ohlcv["high"].max()), 1),
-        "day_low": round(float(ohlcv["low"].min()), 1),
-        "as_of": PROVIDER.as_of,
+        "price": px["price"],
+        "change": px["change"],
+        "change_pct": px["change_pct"],
+        "volume": px["volume"],
+        "day_open": px["open"],
+        "day_high": px["high"],
+        "day_low": px["low"],
+        "as_of": px["as_of"],
+        "market_status": market_status(),
+        "source": px["source"],
+        "mock": px["mock"],
+        "stale": px["stale"],
     }

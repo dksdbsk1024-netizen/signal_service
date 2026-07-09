@@ -218,7 +218,7 @@ export default function FlowTab({ ticker }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
       <Card style={{ padding: "var(--space-3) var(--space-5)" }}>
-        {StockHeader && <StockHeader name={name} ticker={header.ticker} price={header.price} changePct={header.change_pct} changeAmt={header.change} volume={`${(header.volume / 1e4).toFixed(1)}만주`} marketStatus="closed" />}
+        {StockHeader && <StockHeader name={name} ticker={header.ticker} price={header.price} changePct={header.change_pct} changeAmt={header.change} volume={`${(header.volume / 1e4).toFixed(1)}만주`} marketStatus={header.market_status} />}
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: "var(--space-3)", alignItems: "start" }}>
