@@ -238,12 +238,22 @@ class MockProvider(StockProvider, MacroProvider):
 
 # ── 실연동 ─────────────────────────────────────────────────────
 class KISProvider(StockProvider):
-    """한국투자증권 KIS API 연동. 현재가·분봉·호가 실연동 — 수급은 아직 골격."""
+    """한국투자증권 KIS API 연동.
 
-    def __init__(self, app_key: str, app_secret: str, account: str = ""):
+    실연동된 것은 `get_current_price`, `get_minute_ohlcv`, `get_orderbook`,
+    `get_investor_flow`, `get_investor_flow_series` 다섯이다(core.kis).
+    체결강도·거래원은 아직 TR 미연동 — `fallback`(기본 MockProvider)에 위임하고
+    `mock: True` 를 실어 보낸다. 미구현 메서드 하나 때문에 앱이 죽지 않게 하려는 것.
+    개별 TR 이 붙는 대로 위임을 실 호출로 바꾼다.
+    """
+
+    def __init__(self, app_key: str, app_secret: str, account: str = "",
+                 fallback: StockProvider | None = None):
         self.app_key = app_key
         self.app_secret = app_secret
         self.account = account  # 현재가 조회엔 불필요. 주문·잔고 단계에서 사용.
+        # 미연동 TR 전용 폴백. 실데이터 실패 시 폴백은 core.kis 안에서 따로 처리한다.
+        self.fallback = fallback or MockProvider()
 
     def get_current_price(self, ticker: str) -> dict:
         """실시간 현재가. 캐시·재시도·stale 폴백은 core.kis 가 처리.
@@ -263,7 +273,14 @@ class KISProvider(StockProvider):
         return kis.build_minute_ohlcv(ticker, self.app_key, self.app_secret, interval)
 
     def get_investor_flow(self, ticker: str) -> dict:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """당일 수급 스냅샷(외국인·기관·프로그램·개인, 억원).
+
+        장 종료 후에는 확정치, 장중에는 가집계 추정치(`flow["estimated"] is True`)다.
+        추정치는 '추정 순매수 수량 × 현재가' 라 확정 대금과 오차가 있다. 캐시·재시도·
+        stale 폴백은 core.kis 가 처리한다.
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_investor_flow(ticker, self.app_key, self.app_secret)
 
     def get_orderbook(self, ticker: str) -> dict:
         """10호가 + 잔량. MockProvider 와 동일 스키마 + source/mock/stale 플래그.
@@ -275,13 +292,27 @@ class KISProvider(StockProvider):
         return kis.build_orderbook(ticker, self.app_key, self.app_secret)
 
     def get_trade_strength(self, ticker: str) -> dict:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """**Mock 폴백.** 체결강도는 호가 TR(FHKST01010200) 응답에도, 현재가 TR 에도 없다.
+        별도 TR — FHKST01010300(주식현재가 체결)의 tday_rltv 가 필요하다. 다음 단계.
+        """
+        data = self.fallback.get_trade_strength(ticker)
+        data.update({"ticker": ticker, "source": "mock", "mock": True, "stale": False})
+        return data
 
     def get_investor_flow_series(self, ticker: str, days: int = 20) -> dict:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """일별 수급 추이. **확정 행만** 담는다 — 장중이면 오늘은 빠지고 어제까지다.
+
+        KIS 가 1회 호출당 30 영업일만 주므로 days 는 30 에서 잘린다.
+        """
+        from . import kis  # 지연 import (requests 의존)
+        return kis.build_investor_flow_series(ticker, self.app_key, self.app_secret, days)
 
     def get_broker_activity(self, ticker: str) -> list[dict]:
-        raise NotImplementedError("KIS 실연동 미구현 (로드맵 §10 2단계)")
+        """**Mock 폴백.** 거래원 TR 미연동 (로드맵 §10 2단계)."""
+        rows = self.fallback.get_broker_activity(ticker)
+        for row in rows:
+            row.update({"source": "mock", "mock": True})
+        return rows
 
 
 class MacroDataProvider(MacroProvider):

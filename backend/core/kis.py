@@ -1,4 +1,4 @@
-"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV + 호가(Level 2).
+"""KIS(한국투자증권) 실연동 — OAuth 토큰 + 현재가 + 분봉 OHLCV + 호가(Level 2) + 수급.
 
 core.macro / core.quotes 와 같은 역할 분담: HTTP·캐시·재시도·폴백은 이 모듈이 맡고,
 providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독립.
@@ -28,6 +28,35 @@ providers.KISProvider 는 얇게 위임만 한다. 로직은 프레임워크 독
     (rt_cd=0)이지만 호가가 없는 상태다 — 데이터 실패로 취급해 Mock 으로 폴백한다.
     체결강도(cttr)는 **이 응답에도 현재가 응답에도 없다.** 별도 TR(FHKST01010300,
     주식현재가 체결)의 tday_rltv 이며 이번 범위 밖 — get_trade_strength 는 아직 Mock.
+
+수급(외국인·기관·프로그램):
+    한 TR 로 다 안 나온다. 세 개를 합쳐야 한다.
+
+    FHKST01010900(주식현재가 투자자) — 개인/외국인/기관 **확정** 순매수, 최근 30 영업일.
+        순매수 대금 단위는 **백만원**(억원 = /100). 그런데 **당일 행은 장중 내내 빈
+        문자열**이다 — 확정 수급은 장 종료 후에야 채워진다. 그래서 이것만으로는
+        "오늘 외국인이 사고 있나"에 답할 수 없다.
+
+    HHPTJ04160200(종목별 외인기관 추정가집계) — 장중 **가집계 추정치**. 금액이 아니라
+        **수량(주)**이고, 09:30/10:00/11:20/13:20/14:30 다섯 시각(bsop_hour_gb 1~5)에
+        갱신되는 **당일 누적** 순매수 추정 수량이다. 억원으로 보이려면 현재가를 곱한다
+        (평균 체결가가 아니므로 근사 — 반환 dict 의 `estimated=True` 로 표시한다).
+
+    FHPPG04650200(종목별 프로그램매매 일별) — 프로그램 순매수 대금, 단위 **원**(억원 = /1e8).
+        FID_INPUT_DATE_1 은 **기준일**이고 거기서 과거로 30 영업일을 준다(DATE_2 는 무시).
+        확정 투자자와 달리 **당일 행이 장중에도 실시간 누적으로 채워진다** — 실제로 첫 행이
+        FHPPG04650100(체결 틱)의 최신 틱 누적값과 정확히 일치한다. 그래서 프로그램은
+        일별 TR 하나로 스냅샷과 시계열을 모두 덮는다.
+
+    스냅샷(build_investor_flow)이 값을 고르는 순서:
+        1) 당일 행이 확정됐으면 확정치            (장 종료 후)
+        2) 아니면 당일 장중 추정치                (estimated=True)
+        3) 아니면 확정된 가장 최근 행             (개장~09:30, 휴장일 — as_of 에 날짜가 남는다)
+    셋 다 없어야 데이터 실패다. 호가의 '전 단계가 0' 처럼, 세 값이 전부 0 인 응답도
+    데이터 실패로 올려 캐시/Mock 으로 폴백한다.
+
+    시계열(build_investor_flow_series)은 **확정 행만** 쓴다 — 장중 추정치를 확정 막대와
+    같은 차트에 섞으면 마지막 봉만 성격이 다른 그래프가 된다.
 """
 
 from __future__ import annotations
@@ -51,6 +80,9 @@ TOKEN_PATH = "/oauth2/tokenP"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 MINUTE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
 ORDERBOOK_PATH = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+INVESTOR_PATH = "/uapi/domestic-stock/v1/quotations/inquire-investor"
+ESTIMATE_PATH = "/uapi/domestic-stock/v1/quotations/investor-trend-estimate"
+PROGRAM_PATH = "/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily"
 
 # 국내주식 현재가 시세 조회 거래ID.
 TR_CURRENT_PRICE = "FHKST01010100"
@@ -58,6 +90,12 @@ TR_CURRENT_PRICE = "FHKST01010100"
 TR_MINUTE_OHLCV = "FHKST03010200"
 # 국내주식 호가/예상체결 조회 거래ID.
 TR_ORDERBOOK = "FHKST01010200"
+# 주식현재가 투자자 — 개인/외국인/기관 확정 순매수(일별 30행). 당일 행은 장 종료 후 채워짐.
+TR_INVESTOR_DAILY = "FHKST01010900"
+# 종목별 외인기관 추정가집계 — 장중 가집계 순매수 '수량'(당일 누적, 5개 시각).
+TR_INVESTOR_ESTIMATE = "HHPTJ04160200"
+# 종목별 프로그램매매 일별 — 프로그램 순매수 대금(원). 당일 행도 장중 실시간 누적.
+TR_PROGRAM_DAILY = "FHPPG04650200"
 
 # 현재가는 실시간성이 생명 — macro.CACHE_TTL_SEC(20분)를 재사용하면 안 된다.
 # 10초: 새로고침 연타로 API 호출량이 튀는 것만 막고 체감 지연은 없게.
@@ -72,6 +110,19 @@ OHLCV_CACHE_TTL_SEC = 30
 ORDERBOOK_CACHE_TTL_SEC = 3
 
 ORDERBOOK_LEVELS = 10            # KIS 가 주는 호가 단계 수(고정). MockProvider 와 동일.
+
+# 확정 수급은 하루 한 번, 장중 추정치는 하루 다섯 번만 바뀐다 — 짧은 TTL 은 의미가 없다.
+# 60초면 새로고침 연타를 흡수하면서 10:00 갱신을 1분 안에 따라잡는다.
+FLOW_CACHE_TTL_SEC = 60
+# 시계열은 확정 행만 쓰므로 장중엔 아예 안 바뀐다.
+FLOW_SERIES_CACHE_TTL_SEC = 300
+
+DEFAULT_FLOW_DAYS = 20           # MockProvider.get_investor_flow_series 기본값과 동일
+# 두 일별 TR 모두 1회 호출당 30 영업일. 페이징 파라미터가 없어 이보다 길게는 못 본다.
+FLOW_MAX_DAYS = 30
+
+_EOK = 100_000_000.0             # 1억원 (프로그램 대금: 원 → 억원)
+_PBMN_PER_EOK = 100.0            # 확정 순매수 대금: 백만원 → 억원
 
 DEFAULT_MINUTE_BARS = 240        # MockProvider.bars 와 동일
 _MINUTE_MAX_PAGES = 12           # 12 × 30봉 = 360봉. 정규장(09:00~15:30) 391분을 거의 덮는다.
@@ -119,6 +170,12 @@ _OHLCV_CACHE: dict[tuple[str, str], dict] = {}
 
 # ticker → {"data": orderbook_dict, "ts": epoch_seconds}
 _ORDERBOOK_CACHE: dict[str, dict] = {}
+
+# ticker → {"data": flow_dict, "ts": epoch_seconds}
+_FLOW_CACHE: dict[str, dict] = {}
+
+# (ticker, days) → {"data": series_dict, "ts": epoch_seconds}
+_FLOW_SERIES_CACHE: dict[tuple[str, int], dict] = {}
 
 # {"access_token": str, "expires_at": epoch_seconds} 또는 빈 dict.
 _TOKEN: dict = {}
@@ -748,3 +805,352 @@ def build_orderbook(ticker: str, app_key: str, app_secret: str) -> dict:
 
     _ORDERBOOK_CACHE[ticker] = {"data": data, "ts": now}
     return _copy_book(data)
+
+
+# ── 수급 (외국인·기관·프로그램 순매수) ─────────────────────────
+def _get_json(path: str, tr_id: str, params: dict, token: str,
+              app_key: str, app_secret: str, what: str) -> dict:
+    """GET → 검증된 응답 body. 위 fetch 들과 같은 Auth/Data 분류 규약.
+
+    수급은 TR 이 셋이라 같은 20줄을 세 번 쓰는 대신 여기로 모았다.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE}{path}",
+            headers={
+                "authorization": f"Bearer {token}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": tr_id,
+                "custtype": "P",
+            },
+            params=params,
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise KISDataError(f"KIS {what} 요청 실패: {e}") from e
+
+    if resp.status_code in (401, 403):
+        raise KISAuthError(f"KIS 인증 거부 (HTTP {resp.status_code}): {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise KISDataError(f"KIS {what} HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as e:
+        raise KISDataError(f"KIS {what} 응답 파싱 실패: {e}") from e
+
+    if body.get("rt_cd") != "0":
+        raise KISDataError(
+            f"KIS {what} 오류: {body.get('msg_cd')} {body.get('msg1')}",
+            msg_cd=str(body.get("msg_cd", "")),
+            msg1=str(body.get("msg1", "")),
+        )
+    return body
+
+
+def _today_kst() -> str:
+    return datetime.datetime.now(KST).strftime("%Y%m%d")
+
+
+def _pbmn_to_eok(v) -> float:
+    """확정 순매수 대금(백만원) → 억원."""
+    return _to_float(v) / _PBMN_PER_EOK
+
+
+def _won_to_eok(v) -> float:
+    """프로그램 순매수 대금(원) → 억원."""
+    return _to_float(v) / _EOK
+
+
+def _ymd(date: str) -> str:
+    """"20260708" → "2026-07-08". 형식이 아니면 원문 그대로."""
+    return f"{date[:4]}-{date[4:6]}-{date[6:]}" if len(date) == 8 and date.isdigit() else date
+
+
+def _mmdd(date: str) -> str:
+    """"20260708" → "07/08". MockProvider 시계열의 dates 포맷과 같다."""
+    return f"{date[4:6]}/{date[6:]}" if len(date) == 8 and date.isdigit() else date
+
+
+def _fetch_investor_daily(ticker: str, token: str, app_key: str, app_secret: str) -> list[dict]:
+    """GET inquire-investor → output(최근 30 영업일, 최신→과거).
+
+    당일 행은 존재하지만 장중에는 순매수 필드가 전부 빈 문자열이다. 그 판정은 호출자 몫.
+    """
+    body = _get_json(
+        INVESTOR_PATH, TR_INVESTOR_DAILY,
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+        token, app_key, app_secret, "투자자 수급",
+    )
+    rows = body.get("output") or []
+    if not rows:
+        raise KISDataError(f"KIS 투자자 수급 응답이 비었습니다 (ticker={ticker})")
+    return rows
+
+
+def _fetch_investor_estimate(ticker: str, token: str, app_key: str, app_secret: str) -> list[dict]:
+    """GET investor-trend-estimate → output2(시각대별 가집계). 장 시작 직후엔 빈 리스트."""
+    body = _get_json(
+        ESTIMATE_PATH, TR_INVESTOR_ESTIMATE,
+        {"MKSC_SHRN_ISCD": ticker},  # 이 TR 만 파라미터명이 다르다(FID_ 접두어 없음)
+        token, app_key, app_secret, "수급 추정치",
+    )
+    return body.get("output2") or []
+
+
+def _fetch_program_daily(ticker: str, base_date: str, token: str,
+                         app_key: str, app_secret: str) -> dict[str, float]:
+    """GET program-trade-by-stock-daily → {날짜: 프로그램 순매수 억원}.
+
+    FID_INPUT_DATE_1 은 기준일이며 거기서 과거로 30 영업일을 준다. 당일 행도 실시간 누적.
+    """
+    body = _get_json(
+        PROGRAM_PATH, TR_PROGRAM_DAILY,
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+         "FID_INPUT_DATE_1": base_date},
+        token, app_key, app_secret, "프로그램매매",
+    )
+    rows = body.get("output") or []
+    return {
+        r["stck_bsop_date"]: _won_to_eok(r.get("whol_smtn_ntby_tr_pbmn"))
+        for r in rows if r.get("stck_bsop_date")
+    }
+
+
+def _latest_estimate(rows: list[dict]) -> dict | None:
+    """bsop_hour_gb 가 가장 큰(=가장 늦은 시각) 행. 값은 당일 누적 추정 순매수 수량."""
+    graded = [r for r in rows if str(r.get("bsop_hour_gb", "")).isdigit()]
+    return max(graded, key=lambda r: int(r["bsop_hour_gb"])) if graded else None
+
+
+def _flow_dict(ticker: str, date: str, foreign: float, institution: float,
+               retail: float, program: float, estimated: bool) -> dict:
+    """앱 스키마(MockProvider.get_investor_flow 와 동일 키) + source/mock/stale/estimated.
+
+    호가의 '전 단계가 0' 과 같은 취급 — 세 값이 모두 0 이면 수급이 없는 게 아니라
+    응답이 비어 온 것이다(거래정지·매핑 오류). 데이터 실패로 올려 캐시/Mock 으로 넘긴다.
+    """
+    if foreign == 0 and institution == 0 and program == 0:
+        raise KISDataError(
+            f"KIS 수급 3개 값이 모두 0 (ticker={ticker}, date={date}) — 수급 데이터가 없습니다"
+        )
+    as_of = (
+        f"{_ymd(date)} {datetime.datetime.now(KST):%H:%M} KST 장중 추정"
+        if estimated else f"{_ymd(date)} 확정"
+    )
+    return {
+        "ticker": ticker,
+        "foreign": round(foreign, 1),
+        "institution": round(institution, 1),
+        "program": round(program, 1),
+        "retail": round(retail, 1),
+        "unit": "억원",
+        "as_of": as_of,
+        # 장중 추정치는 '수량 × 현재가' 라 확정 대금과 오차가 있다. UI 배지용.
+        "estimated": estimated,
+        "source": "kis",
+        "mock": False,
+        "stale": False,
+    }
+
+
+def _normalize_flow(ticker: str, inv_rows: list[dict], program_by_date: dict[str, float],
+                    est_rows: list[dict], price_of) -> dict:
+    """확정치 → 장중 추정치 → 직전 확정 행 순으로 당일 스냅샷을 만든다.
+
+    `price_of()` 는 추정 수량을 억원으로 바꿀 때만 호출된다(확정치 경로에선 API 를 더 안 쓴다).
+    """
+    today = _today_kst()
+    head = inv_rows[0]
+
+    # 1) 당일 행이 아직 안 채워졌으면(장중) 가집계 추정치로 답한다.
+    if head.get("stck_bsop_date") == today and not head.get("frgn_ntby_tr_pbmn"):
+        est = _latest_estimate(est_rows)
+        if est is not None:
+            price = price_of()
+            foreign = _to_float(est.get("frgn_fake_ntby_qty")) * price / _EOK
+            institution = _to_float(est.get("orgn_fake_ntby_qty")) * price / _EOK
+            return _flow_dict(
+                ticker, today, foreign, institution,
+                # 추정 TR 에 개인은 없다. Mock 과 같은 근사(개인 ≈ 반대편).
+                retail=-(foreign + institution),
+                program=program_by_date.get(today, 0.0),
+                estimated=True,
+            )
+
+    # 2) 확정된 가장 최근 행. 장 시작~09:30 이나 휴장일이면 직전 영업일이 된다
+    #    (as_of 에 그 날짜가 그대로 남으므로 오늘 값으로 오해되지 않는다).
+    row = next((r for r in inv_rows if r.get("frgn_ntby_tr_pbmn")), None)
+    if row is None:
+        raise KISDataError(f"KIS 수급 확정 행이 없습니다 (ticker={ticker})")
+
+    date = row["stck_bsop_date"]
+    return _flow_dict(
+        ticker, date,
+        foreign=_pbmn_to_eok(row.get("frgn_ntby_tr_pbmn")),
+        institution=_pbmn_to_eok(row.get("orgn_ntby_tr_pbmn")),
+        retail=_pbmn_to_eok(row.get("prsn_ntby_tr_pbmn")),
+        program=program_by_date.get(date, 0.0),
+        estimated=False,
+    )
+
+
+def mock_investor_flow(ticker: str) -> dict:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    flow = MockProvider().get_investor_flow(ticker)
+    flow.update({"ticker": ticker, "estimated": False,
+                 "source": "mock", "mock": True, "stale": False})
+    return flow
+
+
+def build_investor_flow(ticker: str, app_key: str, app_secret: str) -> dict:
+    """당일 수급 스냅샷. build_orderbook 과 같은 4단 폴백: 캐시 → KIS → stale 캐시 → Mock.
+
+    인증 실패(KISAuthError)만은 폴백 없이 그대로 던진다.
+    """
+    now = time.time()
+    cached = _FLOW_CACHE.get(ticker)
+    if cached and now - cached["ts"] < FLOW_CACHE_TTL_SEC:
+        return dict(cached["data"])
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False  # 401 로 인한 강제 갱신은 호출당 1회만
+
+    def price_of() -> float:
+        """추정 수량 → 억원 환산용 현재가. Mock 가격으로 환산하면 실데이터인 척하는 값이 된다."""
+        price = build_current_price(ticker, app_key, app_secret)
+        if price["mock"]:
+            raise KISDataError(f"현재가가 Mock 이라 수급 추정치를 환산할 수 없습니다 (ticker={ticker})")
+        return float(price["price"])
+
+    def fetch() -> dict:
+        inv_rows = _fetch_investor_daily(ticker, token, app_key, app_secret)
+        today = _today_kst()
+        # 당일 행이 비었을 때만 추정치를 부른다 — 장 종료 후엔 이 호출이 통째로 빠진다.
+        est_rows = (
+            _fetch_investor_estimate(ticker, token, app_key, app_secret)
+            if inv_rows[0].get("stck_bsop_date") == today
+            and not inv_rows[0].get("frgn_ntby_tr_pbmn")
+            else []
+        )
+        program_by_date = _fetch_program_daily(ticker, today, token, app_key, app_secret)
+        return _normalize_flow(ticker, inv_rows, program_by_date, est_rows, price_of)
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return fetch()
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return fetch()
+
+    try:
+        data = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            stale = dict(cached["data"])
+            stale["stale"] = True
+            return stale
+        return mock_investor_flow(ticker)
+
+    _FLOW_CACHE[ticker] = {"data": data, "ts": now}
+    return dict(data)
+
+
+# ── 수급 시계열 (일별 추이) ────────────────────────────────────
+def _copy_series(series: dict) -> dict:
+    """캐시본 반환용 복사. dates/foreign/... 는 리스트라 dict() 로는 캐시와 공유된다."""
+    out = dict(series)
+    for k in ("dates", "foreign", "institution", "program"):
+        out[k] = list(series[k])
+    return out
+
+
+def _normalize_flow_series(ticker: str, inv_rows: list[dict],
+                           program_by_date: dict[str, float], days: int) -> dict:
+    """확정 행만 골라 오래된→최신 순의 시계열로. 장중 추정치는 섞지 않는다."""
+    rows = [r for r in inv_rows if r.get("frgn_ntby_tr_pbmn")][:days]
+    if not rows:
+        raise KISDataError(f"KIS 수급 시계열에 확정 행이 없습니다 (ticker={ticker})")
+    rows.reverse()  # KIS 는 최신→과거. 차트는 왼쪽이 과거.
+
+    dates = [r["stck_bsop_date"] for r in rows]
+    return {
+        "ticker": ticker,
+        "dates": [_mmdd(d) for d in dates],
+        "foreign": [round(_pbmn_to_eok(r.get("frgn_ntby_tr_pbmn")), 1) for r in rows],
+        "institution": [round(_pbmn_to_eok(r.get("orgn_ntby_tr_pbmn")), 1) for r in rows],
+        "program": [round(program_by_date.get(d, 0.0), 1) for d in dates],
+        "unit": "억원",
+        "as_of": f"{_ymd(dates[-1])} 확정",
+        "source": "kis",
+        "mock": False,
+        "stale": False,
+    }
+
+
+def mock_investor_flow_series(ticker: str, days: int = DEFAULT_FLOW_DAYS) -> dict:
+    """실패/오프라인 폴백. MockProvider 를 그대로 써서 스키마가 갈라지지 않게 한다."""
+    from .providers import MockProvider  # 지연 import (순환 방지)
+
+    series = MockProvider().get_investor_flow_series(ticker, days)
+    series.update({"ticker": ticker, "source": "mock", "mock": True, "stale": False})
+    return series
+
+
+def build_investor_flow_series(ticker: str, app_key: str, app_secret: str,
+                               days: int = DEFAULT_FLOW_DAYS) -> dict:
+    """일별 수급 추이. build_investor_flow 와 같은 4단 폴백.
+
+    두 TR 모두 1회 호출당 30 영업일이고 페이징이 없다 — days > 30 은 30 으로 잘린다.
+    """
+    if days < 1:
+        raise ValueError(f"days 는 1 이상이어야 합니다: {days!r}")  # 폴백 대상 아님
+    days = min(days, FLOW_MAX_DAYS)
+
+    key = (ticker, days)
+    now = time.time()
+    cached = _FLOW_SERIES_CACHE.get(key)
+    if cached and now - cached["ts"] < FLOW_SERIES_CACHE_TTL_SEC:
+        return _copy_series(cached["data"])
+
+    token = get_access_token(app_key, app_secret)  # KISAuthError 는 그대로 전파
+    refreshed = False
+
+    def fetch() -> dict:
+        inv_rows = _fetch_investor_daily(ticker, token, app_key, app_secret)
+        program_by_date = _fetch_program_daily(ticker, _today_kst(), token, app_key, app_secret)
+        return _normalize_flow_series(ticker, inv_rows, program_by_date, days)
+
+    def once():
+        nonlocal token, refreshed
+        try:
+            return fetch()
+        except KISAuthError:
+            if refreshed:
+                raise
+            refreshed = True
+            token = get_access_token(app_key, app_secret, force=True)
+            return fetch()
+
+    try:
+        data = _retry_on_data(once)
+    except KISAuthError:
+        raise
+    except Exception:
+        if cached:
+            stale = _copy_series(cached["data"])
+            stale["stale"] = True
+            return stale
+        return mock_investor_flow_series(ticker, days)
+
+    _FLOW_SERIES_CACHE[key] = {"data": data, "ts": now}
+    return _copy_series(data)
