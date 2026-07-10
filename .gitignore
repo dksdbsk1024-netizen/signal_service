@@ -6,6 +6,11 @@
 # KIS OAuth 토큰 캐시 (core.kis 가 자동 생성, 24h 유효)
 .kis_token.json
 
+# 스냅샷 DB (core.snapshot_store 가 자동 생성, 수집기가 채운다)
+backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+
 # Python
 __pycache__/
 *.py[cod]
