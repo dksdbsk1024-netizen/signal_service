@@ -9,6 +9,10 @@ deps 는 모듈 import 시점에 provider 를 정한다. conftest 는 테스트 
 - 매크로: FRED/ECOS 키를 비워 core.macro 를 Mock 으로 떨군다. load_dotenv(override=False)는
   이미 있는 키를 덮지 않으므로, deps import 시 .env 값이 이 빈 문자열을 이기지 못한다.
 - 시세: yfinance 는 키가 없어도 네트워크를 탄다 → MACRO_LIVE_QUOTES=0 이 따로 필요하다.
+- 수집기: 앱 lifespan 이 스케줄러를 띄운다. TestClient 를 열 때마다 200종목 수집이
+  돌면 테스트가 몇 분씩 걸린다 → COLLECT_ENABLED=0.
+- 스냅샷 DB: 개발자의 실제 backend/data/snapshots.db 를 테스트가 덮어쓰지 않도록
+  인메모리로 돌린다.
 """
 
 from __future__ import annotations
@@ -19,3 +23,5 @@ os.environ.setdefault("STOCK_PROVIDER", "mock")
 os.environ.setdefault("FRED_API_KEY", "")
 os.environ.setdefault("ECOS_API_KEY", "")
 os.environ.setdefault("MACRO_LIVE_QUOTES", "0")
+os.environ.setdefault("COLLECT_ENABLED", "0")
+os.environ.setdefault("SNAPSHOT_DB_PATH", ":memory:")

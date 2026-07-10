@@ -6,24 +6,36 @@ export const API = "http://localhost:8000";
 // window.Ds_a0b250 = _ds_bundle.js 가 붙인 디자인 시스템 컴포넌트 네임스페이스.
 export const Ds = window.Ds_a0b250 || {};
 
-// 데모 워치리스트 — 검색 자동완성 + 코드→종목명 (API는 종목명 미제공).
+// 종목 universe — 검색 자동완성 + 코드→종목명 (API는 종목명 미제공).
+// 시가총액 상위(코스피 대형주). 백엔드 screener.WATCHLIST 와 동일하게 유지한다.
 export const WATCHLIST = [
   { ticker: "005930", name: "삼성전자" },
   { ticker: "000660", name: "SK하이닉스" },
-  { ticker: "035420", name: "NAVER" },
   { ticker: "373220", name: "LG에너지솔루션" },
+  { ticker: "207940", name: "삼성바이오로직스" },
+  { ticker: "005380", name: "현대차" },
+  { ticker: "000270", name: "기아" },
+  { ticker: "068270", name: "셀트리온" },
+  { ticker: "035420", name: "NAVER" },
+  { ticker: "105560", name: "KB금융" },
+  { ticker: "005490", name: "POSCO홀딩스" },
+  { ticker: "012330", name: "현대모비스" },
   { ticker: "035720", name: "카카오" },
+  { ticker: "028260", name: "삼성물산" },
+  { ticker: "055550", name: "신한지주" },
   { ticker: "006400", name: "삼성SDI" },
+  { ticker: "051910", name: "LG화학" },
 ];
 export const NAME_BY_TICKER = Object.fromEntries(WATCHLIST.map((s) => [s.ticker, s.name]));
 
 // 5개 탭 (설정은 탭 아님 — 우측 톱니). DESIGN.md §9 최신 구성.
+// 목록(시총상위)을 첫 진입으로 두고, 행을 누르면 종합 신호(탭)로 이동한다.
 export const TABS = [
+  { id: "screener", label: "종목 목록" },
   { id: "overview", label: "종합 신호" },
   { id: "technical", label: "기술적 분석" },
   { id: "flow", label: "수급" },
   { id: "macro", label: "매크로/시장" },
-  { id: "screener", label: "관심종목" },
 ];
 
 export function fmtWon(v) {

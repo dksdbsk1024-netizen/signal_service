@@ -30,7 +30,7 @@ class ErrorBoundary extends React.Component {
 export default function App() {
   // 탭 공통 상태: 종목은 검색바에서 바꾸면 모든 탭이 같은 종목을 본다.
   const [ticker, setTicker] = useState("005930");
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("screener");
   const [showSettings, setShowSettings] = useState(false);
 
   const suggestions = useMemo(() => WATCHLIST, []);

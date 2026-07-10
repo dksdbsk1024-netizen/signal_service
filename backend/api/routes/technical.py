@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, Query
 
 from ...core import config, indicators as ind_mod, scoring
-from ..deps import load_indicators, get_provider
+from ..deps import get_provider, run_parallel
 
 router = APIRouter(prefix="/api", tags=["technical"])
 
@@ -34,8 +34,13 @@ def get_technical(
     bars: int = Query(120, ge=20, le=480),
 ):
     provider = get_provider()
-    ohlcv = provider.get_minute_ohlcv(ticker, interval).tail(bars)
-    flow = provider.get_investor_flow(ticker)
+    # 분봉·수급은 서로 독립적인 KIS 호출 — 동시에 받는다.
+    fetched = run_parallel({
+        "ohlcv": lambda: provider.get_minute_ohlcv(ticker, interval),
+        "flow": lambda: provider.get_investor_flow(ticker),
+    })
+    ohlcv = fetched["ohlcv"].tail(bars)
+    flow = fetched["flow"]
     ind = ind_mod.compute_indicators(ohlcv, flow)
 
     close = ohlcv["close"]

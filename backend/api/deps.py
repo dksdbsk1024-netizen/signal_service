@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import datetime
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -63,10 +65,24 @@ def get_macro_provider():
     return MACRO_PROVIDER
 
 
+def run_parallel(jobs: dict[str, Callable[[], object]]) -> dict:
+    """{키: 무인자 콜러블} 을 스레드로 동시에 실행하고 {키: 결과} 를 돌려준다.
+    라우트가 서로 독립인 외부 호출(KIS·yfinance)을 한꺼번에 던져 총 지연을 '합' 대신
+    '가장 느린 하나'로 줄이는 공용 헬퍼. 콜러블 안의 예외는 result() 에서 그대로 전파된다."""
+    with ThreadPoolExecutor(max_workers=len(jobs) or 1) as ex:
+        futs = {k: ex.submit(fn) for k, fn in jobs.items()}
+        return {k: f.result() for k, f in futs.items()}
+
+
 def load_indicators(ticker: str) -> tuple[pd.DataFrame, dict, IndicatorSet]:
-    """티커 → (OHLCV, 수급, 계산된 지표). signal/technical/screener 공용."""
-    ohlcv = PROVIDER.get_minute_ohlcv(ticker)
-    flow = PROVIDER.get_investor_flow(ticker)
+    """티커 → (OHLCV, 수급, 계산된 지표). signal/technical/screener 공용.
+
+    OHLCV·수급은 서로 독립적인 KIS 호출이라 동시에 받는다(콜드 캐시에서 두 배 빠름)."""
+    res = run_parallel({
+        "ohlcv": lambda: PROVIDER.get_minute_ohlcv(ticker),
+        "flow": lambda: PROVIDER.get_investor_flow(ticker),
+    })
+    ohlcv, flow = res["ohlcv"], res["flow"]
     ind = compute_indicators(ohlcv, flow)
     return ohlcv, flow, ind
 

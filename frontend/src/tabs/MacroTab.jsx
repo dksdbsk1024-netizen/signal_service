@@ -137,42 +137,64 @@ function CalRow({ ev }) {
   );
 }
 
+// 섹션별 로딩 안내 — 한 덩어리로 기다리지 않고 오는 대로 그리기 위한 자리표시.
+function SectionLoading({ children }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-4)", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--status-live)", opacity: 0.6 }} />
+      {children}
+    </div>
+  );
+}
+
 export default function MacroTab() {
   const [region, setRegion] = useState("all");
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  // 세 조각을 따로 받아 오는 대로 렌더한다(껍데기 먼저 → 섹션별 채우기).
+  //  base     : 소스 배지 + 발표 캘린더 (네트워크 없음 → 사실상 즉시)
+  //  indData  : 섹션 A 경제지표 (FRED, 병렬)
+  //  quotes   : 섹션 B 시세 (yfinance, 병렬)
+  const [base, setBase] = useState(null);
+  const [indData, setIndData] = useState(null);
+  const [quotesData, setQuotesData] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
-    (async () => {
-      setLoading(true); setError(null);
+    const grab = async (path, setter) => {
       try {
-        const res = await fetch(`${API}/api/macro`, { signal: ctrl.signal });
+        const res = await fetch(`${API}/api/macro${path}`, { signal: ctrl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setData(await res.json());
-      } catch (e) { if (e.name !== "AbortError") setError(e.message || "요청 실패"); }
-      finally { setLoading(false); }
-    })();
+        setter(await res.json());
+      } catch (e) {
+        if (e.name !== "AbortError") setError((prev) => prev || e.message || "요청 실패");
+      }
+    };
+    // 병렬 발사 — 서로 기다리지 않는다. 먼저 끝난 섹션부터 화면에 뜬다.
+    grab("/base", setBase);
+    grab("/indicators", setIndData);
+    grab("/quotes", setQuotesData);
     return () => ctrl.abort();
   }, []);
 
   const indicators = useMemo(
-    () => (data?.indicators || []).filter((i) => region === "all" || i.region === region),
-    [data, region]
+    () => (indData?.indicators || []).filter((i) => region === "all" || i.region === region),
+    [indData, region]
   );
 
-  if (error) return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
-  if (!data) return <Banner>{loading ? "매크로 불러오는 중…" : "데이터 없음"}</Banner>;
+  if (error && !base && !indData && !quotesData)
+    return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
 
-  const sourceBadge = data.source === "live"
-    ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · 미국 FRED / 한국 ECOS</span>
-    : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock (API 키 없음)</span>;
+  const source = indData?.source || base?.source;
+  const sourceBadge = source == null
+    ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>소스 확인 중…</span>
+    : source === "live"
+      ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · 미국 FRED / 한국 ECOS</span>
+      : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock (API 키 없음)</span>;
 
-  const q = data.quotes;
+  const q = quotesData?.quotes;
 
   // 발표 캘린더 — 카운트다운(다음 FOMC/CPI/금통위) + 날짜순 리스트(지난 7일~향후 45일).
-  const cal = data.calendar || [];
+  const cal = base?.calendar || [];
   const nextBy = (name) => cal.find((e) => e.name === name && !e.past);
   const highlights = [
     { label: "다음 FOMC", ev: nextBy("미국 FOMC") },
@@ -193,9 +215,13 @@ export default function MacroTab() {
           <SegmentedControl items={REGION_FILTERS} activeId={region} onChange={setRegion} />
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
-        {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
-      </div>
+      {indData == null
+        ? <SectionLoading>경제지표 불러오는 중…</SectionLoading>
+        : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
+            {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
+          </div>
+        )}
 
       {/* 발표 캘린더 — 확정 상수 + 규칙 추정, 오늘 기준 D-day */}
       <Card style={{ padding: "var(--space-4) var(--space-5)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -213,9 +239,11 @@ export default function MacroTab() {
 
         {/* 날짜순 리스트 — 지난 이벤트 흐리게, 임박 강조 */}
         <div>
-          {calList.length === 0
-            ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
-            : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
+          {base == null
+            ? <SectionLoading>발표 캘린더 불러오는 중…</SectionLoading>
+            : calList.length === 0
+              ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
+              : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
         </div>
       </Card>
 
@@ -223,17 +251,23 @@ export default function MacroTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)" }}>
         <SectionEyebrow index="B" title="시세 — 보조 지표" />
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-          {q.source === "yfinance"
-            ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
-            : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
-          {q.as_of && q.as_of !== "Mock" && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {q.as_of}</span>}
+          {q == null
+            ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>불러오는 중…</span>
+            : q.source === "yfinance"
+              ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
+              : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
+          {q && q.as_of && q.as_of !== "Mock" && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {q.as_of}</span>}
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
-        {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
-        <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
-        <QuoteCard q={q.volatility} />
-      </div>
+      {q == null
+        ? <SectionLoading>시세 불러오는 중…</SectionLoading>
+        : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
+            {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
+            <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
+            <QuoteCard q={q.volatility} />
+          </div>
+        )}
     </div>
   );
 }

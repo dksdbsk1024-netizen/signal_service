@@ -84,6 +84,12 @@ npm run dev
 - 프론트: **http://localhost:5173** ← 여기로 접속. (포트 사용 중이면 Vite가 5174 등으로 자동 이동)
 - 백엔드 API: http://localhost:8000 (프론트 `src/ui.jsx`의 `API` 상수가 이 주소를 가리킨다)
 
+> **백엔드는 기동 즉시 수집기를 켠다.** 시총상위 200종목(`backend/data/universe_top200.json`)을
+> 백그라운드로 돌며 지표·스코어를 계산해 `backend/data/snapshots.db`에 넣는다. 라우트는 그 스냅샷만
+> 읽으므로 `/api/screener`가 200종목이어도 100ms 안에 응답한다.
+> KIS 실키가 있으면 **실 API 호출이 시작된다** — 원치 않으면 `COLLECT_ENABLED=0` 또는 `STOCK_PROVIDER=mock`.
+> `--reload` 중에 백엔드 파일을 저장하면 리로드와 함께 수집이 다시 시작된다.
+
 ## 환경 노브
 
 `backend/.env`에서 데이터 소스를 강제로 고정하는 스위치. 키가 있어도 네트워크를 안 타게 만들 때 쓴다.
@@ -92,6 +98,11 @@ npm run dev
 |------|--------|------|-----------|
 | `STOCK_PROVIDER` | `auto` | `auto` = KIS 키 있으면 실데이터, 없으면 Mock. `mock` = 키가 있어도 강제 Mock. | 오프라인 개발, KIS 호출 한도 아끼기 |
 | `MACRO_LIVE_QUOTES` | `1` | 매크로 시세(yfinance) 네트워크 호출. `0` = Mock. | 오프라인 개발. yfinance는 키가 없어도 네트워크를 타므로 별도 노브가 필요 |
+| `COLLECT_ENABLED` | `1` | 앱 기동 시 백그라운드 수집 스케줄러. `0` = 끔. | 검증 스크립트를 돌릴 때(같은 앱키로 유량이 합산돼 `EGW00201`) |
+| `COLLECT_INTERVAL_SEC` | `300` | 수집 주기. 사이클이 더 길면 `max_instances=1`이 그냥 건너뛴다. | 신선도 vs 호출량 |
+| `COLLECT_WORKERS` | `24` | 동시에 수집하는 종목 수. 유량 상한이 아니라 KIS 왕복 지연을 흡수하는 손잡이. | 사이클이 느릴 때 |
+| `KIS_MAX_RPS` | `12` | KIS 호출 유량 상한(토큰버킷, 버스트 없음). 문서상 한도는 20이지만 15에서도 거부당했다. | `EGW00201`이 뜰 때 낮춘다 |
+| `SNAPSHOT_DB_PATH` | `backend/data/snapshots.db` | 스냅샷 SQLite 경로. 배포 시 **영구 볼륨**으로. | 컨테이너 재시작 시 스냅샷 보존 |
 
 경제지표(FRED·ECOS)는 노브 없이 **키 유무만으로** 실데이터/Mock이 갈린다.
 
@@ -101,8 +112,16 @@ npm run dev
 python -m pytest backend/tests -q
 ```
 
-**156개 통과.** `conftest.py`가 `STOCK_PROVIDER=mock`을 강제해 오프라인으로 격리된다 — 실 API 키가 있어도
-테스트는 네트워크를 타지 않는다.
+**246개 통과.** `conftest.py`가 `STOCK_PROVIDER=mock`·`COLLECT_ENABLED=0`·`SNAPSHOT_DB_PATH=:memory:`를
+강제해 오프라인으로 격리된다 — 실 API 키가 있어도 테스트는 네트워크를 타지 않고, 개발자의 실제
+`snapshots.db`도 건드리지 않는다.
+
+수집기 단독 실행(개발·초기 적재용):
+
+```bash
+python -m backend.core.collector --limit 10     # 앞 10종목 1사이클
+python -m backend.scripts.check_universe        # 200종목 코드 유효성 (앱을 내리고 돌릴 것)
+```
 
 ## 키 없이 돌리면
 

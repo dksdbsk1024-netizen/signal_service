@@ -1,6 +1,6 @@
-// 탭5 — 관심종목/스크리너. /api/screener 연결. 행 클릭 → 티커 변경 + 탭1 이동.
+// 탭 — 종목 목록(시총상위). /api/screener 연결. 행 클릭 → 티커 변경 + 종합신호(탭1) 이동.
 import React, { useEffect, useState } from "react";
-import { API, Card, SectionLabel, Banner, LabelBadge } from "../ui.jsx";
+import { API, Card, SectionLabel, Banner, LabelBadge, fmtWon, fmtVolume } from "../ui.jsx";
 
 function scoreColor(s) {
   if (s >= 60) return "var(--signal-buy-strong)";
@@ -8,6 +8,13 @@ function scoreColor(s) {
   if (s > -20) return "var(--signal-neutral)";
   if (s > -60) return "var(--signal-sell)";
   return "var(--signal-sell-strong)";
+}
+
+// 국내 관습: 상승 = 빨강(signal-buy), 하락 = 파랑(signal-sell), 보합 = 회색.
+function changeColor(pct) {
+  if (pct > 0) return "var(--signal-buy)";
+  if (pct < 0) return "var(--signal-sell)";
+  return "var(--text-tertiary)";
 }
 
 // 중앙(0) 기준 좌우로 뻗는 스코어 막대 (-100~+100).
@@ -54,14 +61,17 @@ export default function ScreenerTab({ onPick }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
       <Card style={{ padding: "var(--space-4) var(--space-5)" }}>
-        <SectionLabel right={<span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>{data.count}종목 · 스코어 내림차순</span>}>
-          관심종목 신호 랭킹 (행 클릭 → 종합 신호로 이동)
+        <SectionLabel right={<span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>시총상위 {data.count}종목 · 종합신호 스코어 내림차순</span>}>
+          종목 목록 — 시세 + 종합신호 (행 클릭 → 종합 신호로 이동)
         </SectionLabel>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
             <th style={th}>순위</th>
             <th style={th}>종목</th>
-            <th style={{ ...th, width: 220 }}>스코어</th>
+            <th style={{ ...th, textAlign: "right" }}>현재가</th>
+            <th style={{ ...th, textAlign: "right" }}>등락률</th>
+            <th style={{ ...th, textAlign: "right" }}>거래량</th>
+            <th style={{ ...th, width: 180 }}>스코어</th>
             <th style={th}>신호</th>
             <th style={{ ...th, textAlign: "right" }}>주요 기여</th>
           </tr></thead>
@@ -76,6 +86,17 @@ export default function ScreenerTab({ onPick }) {
                 <td style={td}>
                   <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-primary)" }}>{r.name}</div>
                   <div className="ds-numeric" style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>{r.ticker}</div>
+                </td>
+                <td style={{ ...td, textAlign: "right" }} className="ds-numeric">
+                  <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-primary)" }}>{fmtWon(r.price)}</span>
+                </td>
+                <td style={{ ...td, textAlign: "right" }} className="ds-numeric">
+                  <span style={{ fontSize: "var(--text-sm)", fontWeight: 700, color: changeColor(r.change_pct) }}>
+                    {r.change_pct > 0 ? "+" : ""}{r.change_pct.toFixed(2)}%
+                  </span>
+                </td>
+                <td style={{ ...td, textAlign: "right" }} className="ds-numeric">
+                  <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{fmtVolume(r.volume)}</span>
                 </td>
                 <td style={td}><ScoreBar score={r.final_score} /></td>
                 <td style={td}><LabelBadge label={r.label} /></td>
