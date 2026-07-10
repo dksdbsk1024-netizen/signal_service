@@ -199,7 +199,7 @@ def test_price_401_triggers_one_forced_refresh(monkeypatch):
         kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
     )
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+        kis._SESSION, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
     )
     with pytest.raises(kis.KISAuthError):
         kis.build_current_price("005930", KEY, SECRET)
@@ -210,7 +210,7 @@ def test_price_401_triggers_one_forced_refresh(monkeypatch):
 def test_price_401_then_success(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     responses = [FakeResp(401, None, "expired"), FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})]
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: responses.pop(0))
     data = kis.build_current_price("005930", KEY, SECRET)
     assert data["price"] == 78900
     assert data["mock"] is False
@@ -220,7 +220,7 @@ def test_price_401_then_success(monkeypatch):
 def test_current_price_normalizes_output(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
+        kis._SESSION, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
     )
     data = kis.build_current_price("005930", KEY, SECRET)
     assert data["ticker"] == "005930"
@@ -236,7 +236,7 @@ def test_current_price_normalizes_output(monkeypatch):
 def test_data_error_falls_back_to_mock_when_no_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg_cd": "X", "msg1": "err"})
+        kis._SESSION, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg_cd": "X", "msg1": "err"})
     )
     data = kis.build_current_price("005930", KEY, SECRET)
     assert data["mock"] is True
@@ -247,12 +247,12 @@ def test_data_error_falls_back_to_mock_when_no_cache(monkeypatch):
 def test_data_error_falls_back_to_stale_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     ok = FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: ok)
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: ok)
     first = kis.build_current_price("005930", KEY, SECRET)
     assert first["stale"] is False
 
     kis._PRICE_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료시켜 재요청 유도
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: FakeResp(500, None, "boom"))
     stale = kis.build_current_price("005930", KEY, SECRET)
     assert stale["stale"] is True
     assert stale["mock"] is False
@@ -264,7 +264,7 @@ def test_data_error_retried(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+        kis._SESSION, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
     )
     kis.build_current_price("005930", KEY, SECRET)
     assert len(calls) == kis._FETCH_RETRIES + 1
@@ -274,7 +274,7 @@ def test_price_cache_ttl(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests,
+        kis._SESSION,
         "get",
         lambda *a, **k: (calls.append(1), FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT}))[1],
     )
@@ -332,7 +332,7 @@ def kis_minute(monkeypatch):
     """토큰 발급 + 분봉 페이징을 가짜로. 반환값은 호출된 기준시각 목록."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls: list = []
-    monkeypatch.setattr(kis.requests, "get", _fake_minute_get(calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_minute_get(calls))
     return calls
 
 
@@ -432,7 +432,7 @@ def test_minute_ohlcv_empty_response_falls_back_to_mock(monkeypatch):
     """장 시작 전·휴장일: KIS 가 빈 output2 를 준다 → Mock (mock=True 로 표시)."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output2": []})
+        kis._SESSION, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output2": []})
     )
     df = kis.build_minute_ohlcv("005930", KEY, SECRET, bars=240)
     assert (df.attrs["source"], df.attrs["mock"], df.attrs["stale"]) == ("mock", True, False)
@@ -445,7 +445,7 @@ def test_minute_ohlcv_data_error_falls_back_to_stale_cache(monkeypatch, kis_minu
     assert fresh.attrs["stale"] is False
 
     kis._OHLCV_CACHE[("005930", "1m")]["ts"] = time.time() - 999  # TTL 만료 → 재요청
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: FakeResp(500, None, "boom"))
     stale = kis.build_minute_ohlcv("005930", KEY, SECRET, bars=60)
 
     assert (stale.attrs["mock"], stale.attrs["stale"]) == (False, True)
@@ -456,7 +456,7 @@ def test_minute_ohlcv_data_error_retried(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+        kis._SESSION, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
     )
     kis.build_minute_ohlcv("005930", KEY, SECRET, bars=30)
     assert len(calls) == kis._FETCH_RETRIES + 1
@@ -468,7 +468,7 @@ def test_minute_ohlcv_401_triggers_one_forced_refresh(monkeypatch):
         kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
     )
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+        kis._SESSION, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
     )
     with pytest.raises(kis.KISAuthError):
         kis.build_minute_ohlcv("005930", KEY, SECRET, bars=30)
@@ -511,7 +511,7 @@ def test_orderbook_schema_matches_mock(monkeypatch):
     from backend.core.providers import MockProvider
 
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     book = kis.build_orderbook("005930", KEY, SECRET)
     mock = MockProvider().get_orderbook("005930")
 
@@ -526,7 +526,7 @@ def test_orderbook_schema_matches_mock(monkeypatch):
 def test_orderbook_normalizes_korean_convention(monkeypatch):
     """asks[0] = 최우선 매도(최저가), bids[0] = 최우선 매수(최고가). ask1 > bid1."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     book = kis.build_orderbook("005930", KEY, SECRET)
 
     asks, bids = book["asks"], book["bids"]
@@ -546,7 +546,7 @@ def test_orderbook_normalizes_korean_convention(monkeypatch):
 def test_orderbook_as_of_uses_accept_hour(monkeypatch):
     """as_of 는 수신 시각이 아니라 호가 접수 시각(aspr_acpt_hour). 초까지 남긴다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     book = kis.build_orderbook("005930", KEY, SECRET)
     assert book["as_of"].endswith(" 10:02:26 KST")
 
@@ -558,7 +558,7 @@ def test_orderbook_all_zero_prices_falls_back_to_mock(monkeypatch):
     zeros["askp1"] = "0"
     body = {"rt_cd": "0", "output1": {**zeros, "aspr_acpt_hour": "180000"}}
     # askp1 = "0" 은 falsy 가 아니므로 _fetch 를 통과하고 _normalize 에서 걸러진다.
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get(body))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get(body))
     book = kis.build_orderbook("005930", KEY, SECRET)
     assert (book["source"], book["mock"], book["stale"]) == ("mock", True, False)
     assert len(book["asks"]) == kis.ORDERBOOK_LEVELS
@@ -575,7 +575,7 @@ def test_orderbook_auth_error_not_masked_as_mock(monkeypatch):
 def test_orderbook_data_error_falls_back_to_mock_when_no_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg_cd": "X", "msg1": "err"})
+        kis._SESSION, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg_cd": "X", "msg1": "err"})
     )
     book = kis.build_orderbook("005930", KEY, SECRET)
     assert (book["source"], book["mock"], book["stale"]) == ("mock", True, False)
@@ -583,12 +583,12 @@ def test_orderbook_data_error_falls_back_to_mock_when_no_cache(monkeypatch):
 
 def test_orderbook_data_error_falls_back_to_stale_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     fresh = kis.build_orderbook("005930", KEY, SECRET)
     assert fresh["stale"] is False
 
     kis._ORDERBOOK_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료 → 재요청
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: FakeResp(500, None, "boom"))
     stale = kis.build_orderbook("005930", KEY, SECRET)
 
     assert (stale["mock"], stale["stale"]) == (False, True)
@@ -599,7 +599,7 @@ def test_orderbook_data_error_retried(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+        kis._SESSION, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
     )
     kis.build_orderbook("005930", KEY, SECRET)
     assert len(calls) == kis._FETCH_RETRIES + 1
@@ -611,7 +611,7 @@ def test_orderbook_401_triggers_one_forced_refresh(monkeypatch):
         kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
     )
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+        kis._SESSION, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
     )
     with pytest.raises(kis.KISAuthError):
         kis.build_orderbook("005930", KEY, SECRET)
@@ -622,7 +622,7 @@ def test_orderbook_401_triggers_one_forced_refresh(monkeypatch):
 def test_orderbook_cache_ttl(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls: list = []
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get(calls=calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get(calls=calls))
     kis.build_orderbook("005930", KEY, SECRET)
     kis.build_orderbook("005930", KEY, SECRET)
     assert len(calls) == 1  # TTL 내 두 번째는 캐시
@@ -631,7 +631,7 @@ def test_orderbook_cache_ttl(monkeypatch):
 def test_orderbook_cache_not_poisoned_by_caller(monkeypatch):
     """캐시본을 얕은 복사로 주면 호출자가 asks 를 건드릴 때 캐시가 오염된다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     first = kis.build_orderbook("005930", KEY, SECRET)
     first["asks"][0]["qty"] = -1
     first["asks"].clear()
@@ -678,7 +678,7 @@ def test_trade_strength_schema_matches_mock(monkeypatch):
     from backend.core.providers import MockProvider
 
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get())
     data = kis.build_trade_strength("005930", KEY, SECRET)
     mock = MockProvider().get_trade_strength("005930")
 
@@ -690,7 +690,7 @@ def test_trade_strength_schema_matches_mock(monkeypatch):
 def test_trade_strength_uses_latest_tick(monkeypatch):
     """output[0] 이 마지막 체결. as_of 도 수신 시각이 아니라 그 체결 시각이다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get())
     data = kis.build_trade_strength("005930", KEY, SECRET)
 
     assert data["strength"] == 79.9          # 79.93 (최신), 79.92 (한 틱 전) 아님
@@ -701,7 +701,7 @@ def test_trade_strength_zero_falls_back_to_mock(monkeypatch):
     """장 시작 전·휴장일: rt_cd=0 이지만 tday_rltv 가 0 → 데이터 실패 → Mock."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     body = {"rt_cd": "0", "output": _ccnl_rows(rltv="0")}
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get(body))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get(body))
     data = kis.build_trade_strength("005930", KEY, SECRET)
 
     assert (data["source"], data["mock"], data["stale"]) == ("mock", True, False)
@@ -710,7 +710,7 @@ def test_trade_strength_zero_falls_back_to_mock(monkeypatch):
 
 def test_trade_strength_empty_output_falls_back_to_mock(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get({"rt_cd": "0", "output": []}))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get({"rt_cd": "0", "output": []}))
     assert kis.build_trade_strength("005930", KEY, SECRET)["mock"] is True
 
 
@@ -724,12 +724,12 @@ def test_trade_strength_auth_error_not_masked_as_mock(monkeypatch):
 
 def test_trade_strength_data_error_falls_back_to_stale_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get())
     fresh = kis.build_trade_strength("005930", KEY, SECRET)
     assert fresh["stale"] is False
 
     kis._STRENGTH_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료 → 재요청
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: FakeResp(500, None, "boom"))
     stale = kis.build_trade_strength("005930", KEY, SECRET)
 
     assert (stale["mock"], stale["stale"]) == (False, True)
@@ -740,7 +740,7 @@ def test_trade_strength_data_error_retried(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+        kis._SESSION, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
     )
     kis.build_trade_strength("005930", KEY, SECRET)
     assert len(calls) == kis._FETCH_RETRIES + 1
@@ -752,7 +752,7 @@ def test_trade_strength_401_triggers_one_forced_refresh(monkeypatch):
         kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
     )
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+        kis._SESSION, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
     )
     with pytest.raises(kis.KISAuthError):
         kis.build_trade_strength("005930", KEY, SECRET)
@@ -763,7 +763,7 @@ def test_trade_strength_401_triggers_one_forced_refresh(monkeypatch):
 def test_trade_strength_cache_ttl(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls: list = []
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get(calls=calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get(calls=calls))
     kis.build_trade_strength("005930", KEY, SECRET)
     kis.build_trade_strength("005930", KEY, SECRET)
     assert len(calls) == 1  # TTL 내 두 번째는 캐시
@@ -818,7 +818,7 @@ def test_broker_schema_matches_mock(monkeypatch):
     from backend.core.providers import MockProvider
 
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     data = kis.build_broker_activity("005930", KEY, SECRET)
     mock = MockProvider().get_broker_activity("005930")
 
@@ -833,7 +833,7 @@ def test_broker_schema_matches_mock(monkeypatch):
 def test_broker_sides_are_separate_sets(monkeypatch):
     """매도 상위와 매수 상위는 창구 집합이 다르다 — 합쳐서 순매수 한 줄로 만들면 안 된다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     data = kis.build_broker_activity("005930", KEY, SECRET)
 
     sellers, buyers = data["sellers"], data["buyers"]
@@ -853,7 +853,7 @@ def test_broker_sides_are_separate_sets(monkeypatch):
 def test_broker_foreign_aggregate_exceeds_top5(monkeypatch):
     """외국계 집계는 상위 5 밖 창구까지 포함한다 → 상위 5 안 외국계 합보다 크다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     f = kis.build_broker_activity("005930", KEY, SECRET)["foreign"]
 
     assert f["net_qty"] == f["buy_qty"] - f["sell_qty"] == -803_088
@@ -865,7 +865,7 @@ def test_broker_all_zero_qty_falls_back_to_mock(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     zeros = [(name, 0, "0.00", glob) for name, _, _, glob in _SELL_BROKERS]
     body = {"rt_cd": "0", "output": [_member_output(sells=zeros, buys=zeros, acml_vol="0")]}
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get(body))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get(body))
     data = kis.build_broker_activity("005930", KEY, SECRET)
 
     assert (data["source"], data["mock"], data["stale"]) == ("mock", True, False)
@@ -874,7 +874,7 @@ def test_broker_all_zero_qty_falls_back_to_mock(monkeypatch):
 
 def test_broker_empty_output_falls_back_to_mock(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get({"rt_cd": "0", "output": []}))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get({"rt_cd": "0", "output": []}))
     assert kis.build_broker_activity("005930", KEY, SECRET)["mock"] is True
 
 
@@ -883,7 +883,7 @@ def test_broker_blank_names_are_skipped(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     sells = _SELL_BROKERS[:2] + [("", 0, "0.00", "N")] * 3
     body = {"rt_cd": "0", "output": [_member_output(sells=sells)]}
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get(body))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get(body))
     data = kis.build_broker_activity("005930", KEY, SECRET)
 
     assert [r["rank"] for r in data["sellers"]] == [1, 2]
@@ -901,12 +901,12 @@ def test_broker_auth_error_not_masked_as_mock(monkeypatch):
 
 def test_broker_data_error_falls_back_to_stale_cache(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     fresh = kis.build_broker_activity("005930", KEY, SECRET)
     assert fresh["stale"] is False
 
     kis._BROKER_CACHE["005930"]["ts"] = time.time() - 999  # TTL 만료 → 재요청
-    monkeypatch.setattr(kis.requests, "get", lambda *a, **k: FakeResp(500, None, "boom"))
+    monkeypatch.setattr(kis._SESSION, "get", lambda *a, **k: FakeResp(500, None, "boom"))
     stale = kis.build_broker_activity("005930", KEY, SECRET)
 
     assert (stale["mock"], stale["stale"]) == (False, True)
@@ -917,7 +917,7 @@ def test_broker_data_error_retried(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls = []
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
+        kis._SESSION, "get", lambda *a, **k: (calls.append(1), FakeResp(500, None, "boom"))[1]
     )
     kis.build_broker_activity("005930", KEY, SECRET)
     assert len(calls) == kis._FETCH_RETRIES + 1
@@ -929,7 +929,7 @@ def test_broker_401_triggers_one_forced_refresh(monkeypatch):
         kis.requests, "post", lambda *a, **k: (posts.append(1), FakeResp(200, _token_body()))[1]
     )
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
+        kis._SESSION, "get", lambda *a, **k: (gets.append(1), FakeResp(401, None, "unauthorized"))[1]
     )
     with pytest.raises(kis.KISAuthError):
         kis.build_broker_activity("005930", KEY, SECRET)
@@ -940,7 +940,7 @@ def test_broker_401_triggers_one_forced_refresh(monkeypatch):
 def test_broker_cache_ttl(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     calls: list = []
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get(calls=calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get(calls=calls))
     kis.build_broker_activity("005930", KEY, SECRET)
     kis.build_broker_activity("005930", KEY, SECRET)
     assert len(calls) == 1  # TTL 내 두 번째는 캐시
@@ -949,7 +949,7 @@ def test_broker_cache_ttl(monkeypatch):
 def test_broker_cache_not_poisoned_by_caller(monkeypatch):
     """캐시본을 얕은 복사로 주면 호출자가 sellers 를 건드릴 때 캐시가 오염된다."""
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     first = kis.build_broker_activity("005930", KEY, SECRET)
     first["sellers"][0]["qty"] = -1
     first["sellers"].clear()
@@ -973,7 +973,7 @@ def test_mock_broker_activity_schema():
 def test_provider_delegates_current_price(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
     monkeypatch.setattr(
-        kis.requests, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
+        kis._SESSION, "get", lambda *a, **k: FakeResp(200, {"rt_cd": "0", "output": OK_OUTPUT})
     )
     assert KISProvider(KEY, SECRET).get_current_price("005930")["price"] == 78900
 
@@ -986,7 +986,7 @@ def test_provider_delegates_minute_ohlcv(kis_minute):
 
 def test_provider_delegates_orderbook(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_book_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_book_get())
     book = KISProvider(KEY, SECRET).get_orderbook("005930")
     assert book["asks"][0]["price"] == 286_500
     assert book["source"] == "kis"
@@ -994,7 +994,7 @@ def test_provider_delegates_orderbook(monkeypatch):
 
 def test_provider_delegates_trade_strength(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_ccnl_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_ccnl_get())
     data = KISProvider(KEY, SECRET).get_trade_strength("005930")
     assert data["strength"] == 79.9
     assert data["source"] == "kis"
@@ -1002,7 +1002,7 @@ def test_provider_delegates_trade_strength(monkeypatch):
 
 def test_provider_delegates_broker_activity(monkeypatch):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_member_get())
+    monkeypatch.setattr(kis._SESSION, "get", _fake_member_get())
     data = KISProvider(KEY, SECRET).get_broker_activity("005930")
     assert data["sellers"][0]["name"] == "미래에셋증권"
     assert data["source"] == "kis"
@@ -1104,7 +1104,7 @@ def flow_clock(monkeypatch):
 
 def _flow(monkeypatch, **kw):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_flow_get(**kw))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_flow_get(**kw))
     return kis.build_investor_flow("005930", KEY, SECRET)
 
 
@@ -1153,7 +1153,7 @@ def test_flow_skips_estimate_call_when_confirmed(monkeypatch, flow_clock):
     """확정치 경로에선 추정 TR·현재가 TR 을 아예 안 부른다(호출 절약)."""
     calls: list[str] = []
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_flow_get(pending=False, calls=calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_flow_get(pending=False, calls=calls))
     kis.build_investor_flow("005930", KEY, SECRET)
     assert kis.TR_INVESTOR_ESTIMATE not in calls
     assert kis.TR_CURRENT_PRICE not in calls
@@ -1183,7 +1183,7 @@ def test_flow_all_zero_falls_back_to_mock(monkeypatch, flow_clock):
         return FakeResp(200, {"rt_cd": "0", "output2": []})
 
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _get)
+    monkeypatch.setattr(kis._SESSION, "get", _get)
     flow = kis.build_investor_flow("005930", KEY, SECRET)
     assert flow["mock"] is True and flow["source"] == "mock"
 
@@ -1201,7 +1201,7 @@ def test_flow_estimate_not_converted_with_mock_price(monkeypatch, flow_clock):
         raise kis.requests.RequestException("현재가 실패")  # → build_current_price 가 Mock 반환
 
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _get)
+    monkeypatch.setattr(kis._SESSION, "get", _get)
     flow = kis.build_investor_flow("005930", KEY, SECRET)
     assert flow["mock"] is True  # 스냅샷 전체가 Mock 폴백. 추정치를 Mock 가격으로 환산하지 않음
 
@@ -1214,7 +1214,7 @@ def test_flow_auth_error_not_masked_as_mock(monkeypatch, flow_clock):
 
 def test_flow_data_error_falls_back_to_mock_when_no_cache(monkeypatch, flow_clock):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get",
+    monkeypatch.setattr(kis._SESSION, "get",
                         lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg1": "오류"}))
     flow = kis.build_investor_flow("005930", KEY, SECRET)
     assert flow["mock"] is True and flow["source"] == "mock"
@@ -1224,7 +1224,7 @@ def test_flow_data_error_falls_back_to_stale_cache(monkeypatch, flow_clock):
     fresh = _flow(monkeypatch, pending=False)
     assert fresh["stale"] is False
     kis._FLOW_CACHE["005930"]["ts"] = 0  # TTL 만료
-    monkeypatch.setattr(kis.requests, "get",
+    monkeypatch.setattr(kis._SESSION, "get",
                         lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg1": "오류"}))
     stale = kis.build_investor_flow("005930", KEY, SECRET)
     assert stale["stale"] is True and stale["mock"] is False
@@ -1234,7 +1234,7 @@ def test_flow_data_error_falls_back_to_stale_cache(monkeypatch, flow_clock):
 def test_flow_cache_ttl(monkeypatch, flow_clock):
     calls: list[str] = []
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_flow_get(pending=False, calls=calls))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_flow_get(pending=False, calls=calls))
     kis.build_investor_flow("005930", KEY, SECRET)
     kis.build_investor_flow("005930", KEY, SECRET)
     assert calls.count(kis.TR_INVESTOR_DAILY) == 1  # 두 번째는 캐시
@@ -1259,7 +1259,7 @@ def test_flow_401_triggers_one_forced_refresh(monkeypatch, flow_clock):
         return FakeResp(401, {}, "token expired")
 
     monkeypatch.setattr(kis.requests, "post", _post)
-    monkeypatch.setattr(kis.requests, "get", _get)
+    monkeypatch.setattr(kis._SESSION, "get", _get)
     with pytest.raises(kis.KISAuthError):
         kis.build_investor_flow("005930", KEY, SECRET)
     assert len(posts) == 2  # 최초 발급 + 강제 재발급 1회
@@ -1269,7 +1269,7 @@ def test_flow_401_triggers_one_forced_refresh(monkeypatch, flow_clock):
 # ── 수급 시계열 ────────────────────────────────────────────────
 def _series(monkeypatch, days=kis.DEFAULT_FLOW_DAYS, **kw):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_flow_get(**kw))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_flow_get(**kw))
     return kis.build_investor_flow_series("005930", KEY, SECRET, days)
 
 
@@ -1312,7 +1312,7 @@ def test_series_rejects_bad_days(monkeypatch, flow_clock):
 
 def test_series_data_error_falls_back_to_mock(monkeypatch, flow_clock):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get",
+    monkeypatch.setattr(kis._SESSION, "get",
                         lambda *a, **k: FakeResp(200, {"rt_cd": "1", "msg1": "오류"}))
     series = kis.build_investor_flow_series("005930", KEY, SECRET)
     assert series["mock"] is True and len(series["dates"]) == kis.DEFAULT_FLOW_DAYS
@@ -1335,7 +1335,7 @@ def test_series_cache_not_poisoned_by_caller(monkeypatch, flow_clock):
 
 def test_provider_delegates_flow(monkeypatch, flow_clock):
     monkeypatch.setattr(kis.requests, "post", lambda *a, **k: FakeResp(200, _token_body()))
-    monkeypatch.setattr(kis.requests, "get", _fake_flow_get(pending=False))
+    monkeypatch.setattr(kis._SESSION, "get", _fake_flow_get(pending=False))
     p = KISProvider(KEY, SECRET)
     assert p.get_investor_flow("005930")["foreign"] == -8709.6
     assert p.get_investor_flow_series("005930")["source"] == "kis"

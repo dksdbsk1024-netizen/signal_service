@@ -86,6 +86,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -219,11 +220,77 @@ _FLOW_SERIES_CACHE: dict[tuple[str, int], dict] = {}
 
 # {"access_token": str, "expires_at": epoch_seconds} 또는 빈 dict.
 _TOKEN: dict = {}
+# 토큰 발급 직렬화 락. 라우트가 여러 KIS 호출을 동시에 던지면(병렬 fetch) 콜드 상태에서
+# 여러 스레드가 동시에 _issue_token 을 때릴 수 있는데, 발급은 appkey 당 1분에 1회 제한이라
+# 곧바로 실패한다. 이 락으로 발급을 한 번만 하고 나머지는 방금 받은 토큰을 재사용한다.
+_TOKEN_LOCK = threading.Lock()
+# 발급이 일어날 때마다 +1. force 재발급이 여러 스레드에서 동시에 걸려도(모두 401 을 받은
+# 경우), 락을 먼저 잡은 하나만 발급하고 나머지는 '버전이 바뀌었다'를 보고 새 토큰을 재사용한다.
+_TOKEN_VERSION = 0
 
 # Mock 폴백 값(price, change, change_pct). 최초 fetch 실패 + 캐시 없음일 때만.
 _MOCK_VALUES: dict[str, tuple[int, int, float]] = {
     "005930": (78_900, 900, 1.15),
 }
+
+
+# ── 유량 제한: 초당 15건 ──────────────────────────────────────
+class _TokenBucket:
+    """초당 `rate` 개씩 차오르고 최대 `capacity` 개까지 모이는 토큰 통.
+
+    버킷이 이 모듈에 있는 이유: 종목 하나를 수집하면 여기서 GET 이 12번 나간다
+    (분봉 8페이지 + 수급 4). 수집기 쪽 세마포어는 '종목'만 셀 뿐 GET 을 못 세므로
+    한도를 지킬 수 없다. 유량은 requests.get 바로 앞에서만 정확히 셀 수 있다.
+    """
+
+    def __init__(self, rate: float, capacity: float,
+                 monotonic=time.monotonic, sleep=time.sleep) -> None:
+        self.rate = float(rate)
+        self.capacity = float(capacity)
+        self._tokens = float(capacity)
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._updated = monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """토큰 하나를 쓴다. 모자라면 부족분이 찰 만큼 잔다.
+
+        토큰을 먼저 빼고(잔량이 음수가 될 수 있다) 그 빚만큼만 잔다. '찰 때까지
+        다시 확인' 루프를 돌면 (1-tokens)/rate 만큼 자도 부동소수 오차로 tokens 가
+        0.9999… 에 걸려 무한히 잘게 도는 일이 생긴다. 빚 방식은 루프가 없고
+        장기 평균 발급률이 정확히 rate 로 수렴한다.
+        """
+        with self._lock:
+            now = self._monotonic()
+            self._tokens = min(
+                self.capacity, self._tokens + (now - self._updated) * self.rate
+            )
+            self._updated = now
+            self._tokens -= 1.0
+            if self._tokens >= 0.0:
+                return
+            wait = -self._tokens / self.rate
+        # 락 밖에서 잔다. 안에서 자면 대기 중인 스레드까지 같이 묶인다.
+        self._sleep(wait)
+
+
+# KIS 한도는 문서상 초당 약 20건(슬라이딩 윈도우)이지만, 실측에서 15건으로도
+# EGW00201("초당 거래건수를 초과하였습니다")을 맞았다. 12로 낮춰 마진을 둔다.
+KIS_MAX_RPS = float(os.getenv("KIS_MAX_RPS", "12"))
+# capacity=1 — 버스트 금지. 통을 가득 채워 두면 초반 N개가 순식간에 나가고,
+# KIS 의 1초 창에서는 그 N개와 뒤이은 정상 페이스가 겹쳐 한도를 넘는다.
+_RATE = _TokenBucket(rate=KIS_MAX_RPS, capacity=1)
+
+
+# ── HTTP 커넥션 재사용 ────────────────────────────────────────
+# requests.get() 은 호출마다 Session 을 새로 만든다 = 매번 TCP + TLS 핸드셰이크.
+# 수집기는 종목당 GET 18번, 200종목이면 3,600번을 던지므로 핸드셰이크가 사이클을 지배한다.
+# 실측(동시 20건): 모듈 함수는 GET 당 중앙값 7.64초, 공유 Session 은 0.67초.
+_POOL_SIZE = max(32, int(os.getenv("COLLECT_WORKERS", "8")) * 2)
+_SESSION = requests.Session()
+_SESSION.mount("https://", requests.adapters.HTTPAdapter(
+    pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE))
 
 
 # ── 재시도: 인증 실패는 재시도하지 않는다 ──────────────────────
@@ -337,22 +404,35 @@ def get_access_token(app_key: str, app_secret: str, force: bool = False) -> str:
 
     `force=True` 면 캐시를 건너뛰고 재발급한다(서버가 토큰을 거부한 경우).
     """
-    global _TOKEN
+    global _TOKEN, _TOKEN_VERSION
 
     if not app_key or not app_secret:
         raise KISAuthError("KIS_APP_KEY / KIS_APP_SECRET 이 설정되지 않았습니다")
 
-    if not force:
-        if _is_fresh(_TOKEN, app_key):
-            return _TOKEN["access_token"]
-        from_disk = _load_token_file(app_key)
-        if _is_fresh(from_disk, app_key):
-            _TOKEN = from_disk
+    # 락 밖 빠른 경로 — 신선한 메모리 토큰이면 경쟁 없이 즉시 반환(대부분의 호출).
+    if not force and _is_fresh(_TOKEN, app_key):
+        return _TOKEN["access_token"]
+
+    seen_version = _TOKEN_VERSION  # 락 대기 전 버전 스냅샷
+    with _TOKEN_LOCK:
+        # 락을 기다리는 사이 다른 스레드가 새로 발급했으면(버전이 바뀜) 그 토큰을 재사용.
+        # force 로 들어온 스레드들이 여기서 걸러져, 발급은 배치당 한 번만 일어난다.
+        if _TOKEN_VERSION != seen_version and _is_fresh(_TOKEN, app_key):
             return _TOKEN["access_token"]
 
-    _TOKEN = _issue_token(app_key, app_secret)
-    _save_token_file(_TOKEN)
-    return _TOKEN["access_token"]
+        if not force:
+            if _is_fresh(_TOKEN, app_key):
+                return _TOKEN["access_token"]
+            from_disk = _load_token_file(app_key)
+            if _is_fresh(from_disk, app_key):
+                _TOKEN = from_disk
+                _TOKEN_VERSION += 1
+                return _TOKEN["access_token"]
+
+        _TOKEN = _issue_token(app_key, app_secret)
+        _TOKEN_VERSION += 1
+        _save_token_file(_TOKEN)
+        return _TOKEN["access_token"]
 
 
 # ── 공통 ───────────────────────────────────────────────────────
@@ -371,8 +451,9 @@ def _get_json(path: str, tr_id: str, params: dict, token: str,
     체결강도(1개)·수급(3개) TR 이 같은 20줄을 네 번 쓰는 대신 여기로 모았다.
     현재가·분봉·호가는 이 함수보다 먼저 쓰여 각자 인라인 fetch 를 갖고 있다.
     """
+    _RATE.acquire()
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{BASE}{path}",
             headers={
                 "authorization": f"Bearer {token}",
@@ -422,8 +503,9 @@ def _as_of_hhmmss(hhmmss) -> str:
 # ── 현재가 fetch ───────────────────────────────────────────────
 def _fetch_price(ticker: str, token: str, app_key: str, app_secret: str) -> dict:
     """GET inquire-price → KIS `output` dict 원본. 실패는 Auth/Data 로 분류."""
+    _RATE.acquire()
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{BASE}{PRICE_PATH}",
             headers={
                 "authorization": f"Bearer {token}",
@@ -604,8 +686,9 @@ def _parse_bar(row: dict) -> tuple | None:
 
 def _fetch_minute_page(ticker: str, hhmmss: str, token: str, app_key: str, app_secret: str) -> list[dict]:
     """GET inquire-time-itemchartprice → output2(최대 30봉, 최신→과거). 빈 리스트 가능."""
+    _RATE.acquire()
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{BASE}{MINUTE_PATH}",
             headers={
                 "authorization": f"Bearer {token}",
@@ -758,8 +841,9 @@ def _fetch_orderbook(ticker: str, token: str, app_key: str, app_secret: str) -> 
 
     `output2`(예상체결)는 장 시작 전·마감 동시호가 때만 의미가 있어 쓰지 않는다.
     """
+    _RATE.acquire()
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{BASE}{ORDERBOOK_PATH}",
             headers={
                 "authorization": f"Bearer {token}",
