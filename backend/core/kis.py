@@ -287,7 +287,14 @@ _RATE = _TokenBucket(rate=KIS_MAX_RPS, capacity=1)
 # requests.get() 은 호출마다 Session 을 새로 만든다 = 매번 TCP + TLS 핸드셰이크.
 # 수집기는 종목당 GET 18번, 200종목이면 3,600번을 던지므로 핸드셰이크가 사이클을 지배한다.
 # 실측(동시 20건): 모듈 함수는 GET 당 중앙값 7.64초, 공유 Session 은 0.67초.
-_POOL_SIZE = max(32, int(os.getenv("COLLECT_WORKERS", "8")) * 2)
+# 동시에 물고 있는 종목 수. 유량 상한이 아니라 '지연 흡수' 손잡이다 —
+# 워커가 적으면 KIS 왕복을 기다리느라 버킷의 12/s 를 채우지 못한다.
+# collector 가 스레드풀 크기로 쓰고, 여기선 커넥션 풀을 거기 맞춘다. 상위 모듈이
+# 아니라 여기에 두는 이유는 collector 가 kis 를 import 하기 때문(역방향은 순환).
+COLLECT_WORKERS = int(os.getenv("COLLECT_WORKERS", "24"))
+# 풀이 워커보다 작으면 초과분이 커넥션을 기다리며 직렬화된다. 하한 32 는 수집기가
+# 꺼져 있을 때(라우트만 뜬 상태) 쓰는 여유값.
+_POOL_SIZE = max(32, COLLECT_WORKERS * 2)
 _SESSION = requests.Session()
 _SESSION.mount("https://", requests.adapters.HTTPAdapter(
     pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE))

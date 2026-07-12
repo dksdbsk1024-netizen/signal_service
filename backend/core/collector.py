@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ..api.deps import load_indicators, market_status, stock_header
 from . import scoring
-from .kis import KISAuthError
+from .kis import COLLECT_WORKERS, KISAuthError
 from .snapshot_store import SnapshotStore, get_store
 
 log = logging.getLogger(__name__)
@@ -43,9 +43,6 @@ UNIVERSE_FILE = Path(__file__).resolve().parents[1] / "data" / "universe_top200.
 # 사이클이 주기보다 길면 max_instances=1 이 그냥 건너뛴다 — 호출량이 두 배가 되진 않고,
 # 사실상 '끝나는 대로 다시' 가 된다.
 COLLECT_INTERVAL_SEC = int(os.getenv("COLLECT_INTERVAL_SEC", "300"))
-# 동시에 물고 있는 종목 수. 유량 상한이 아니라 '지연 흡수' 손잡이다 —
-# 워커가 적으면 KIS 왕복을 기다리느라 버킷의 12/s 를 채우지 못한다.
-COLLECT_WORKERS = int(os.getenv("COLLECT_WORKERS", "24"))
 
 _KST = datetime.timezone(datetime.timedelta(hours=9))
 
