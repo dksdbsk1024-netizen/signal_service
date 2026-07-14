@@ -7,8 +7,10 @@ import React from "react";
 import { fmtVolume } from "../ui.jsx";
 
 /** 서버 as_of 가 있으면 그게 진짜 데이터 시각이다(스냅샷은 최대 3분 늙었다).
- *  없으면 fetch 시각이 곧 데이터 시각이다(라이브 라우트). */
-function ageText(asOf, fetchedAt) {
+ *  없으면 fetch 시각이 곧 데이터 시각이다(라이브 라우트).
+ *  스크리너·매크로 탭도 같은 규칙을 쓰므로 여기서 export 해 재사용한다 — 복붙하면
+ *  "n분 전" 판정 기준이 탭마다 슬쩍 달라진다. */
+export function ageText(asOf, fetchedAt) {
   const t = asOf ? new Date(asOf) : fetchedAt;
   if (!t || Number.isNaN(t.getTime())) return "—";
   const sec = Math.max(0, Math.round((Date.now() - t.getTime()) / 1000));
@@ -16,6 +18,38 @@ function ageText(asOf, fetchedAt) {
   const min = Math.floor(sec / 60);
   if (min < 60) return `${min}분 전`;
   return `${Math.floor(min / 60)}시간 전`;
+}
+
+// 갱신 시각 + 새로고침 버튼 한 줄 — 종합신호 헤더와 스크리너·매크로 탭이 함께 쓰는 조각.
+// 탭마다 새로 그리면 "갱신 실패" 문구·버튼 상태가 슬쩍 달라지므로 여기 하나로 둔다.
+export function RefreshLine({ asOf, fetchedAt, isRefreshing, error, onRefresh }) {
+  // 시각 문자열은 시간이 흘러야 바뀐다 — 데이터가 그대로여도 30초마다 다시 그린다.
+  const [, tick] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+  const age = ageText(asOf, fetchedAt);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+      <span style={{ fontSize: "var(--text-xs)", color: error ? "var(--signal-sell)" : "var(--text-tertiary)" }}>
+        {error ? `갱신 실패 · 마지막 데이터 ${age}` : `갱신 ${age}`}
+      </span>
+      <button
+        onClick={onRefresh}
+        disabled={isRefreshing}
+        style={{
+          appearance: "none", cursor: isRefreshing ? "default" : "pointer",
+          border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+          background: "var(--bg-inset)", color: "var(--text-secondary)",
+          padding: "var(--space-1) var(--space-3)", fontSize: "var(--text-xs)", fontWeight: 600,
+          opacity: isRefreshing ? 0.6 : 1, whiteSpace: "nowrap",
+        }}
+      >
+        {isRefreshing ? "갱신 중…" : "↻ 새로고침"}
+      </button>
+    </div>
+  );
 }
 
 // 백엔드 market_hours.market_status() 가 주는 세 값이 전부다.
@@ -35,14 +69,6 @@ function MarketBadge({ status }) {
 export default function DashboardHeader({
   ticker, name, header, asOf, fetchedAt, isRefreshing, error, onRefresh,
 }) {
-  // 시각 문자열은 시간이 흘러야 바뀐다 — 데이터가 그대로여도 30초마다 다시 그린다.
-  const [, tick] = React.useState(0);
-  React.useEffect(() => {
-    const id = setInterval(() => tick((n) => n + 1), 30000);
-    return () => clearInterval(id);
-  }, []);
-
-  const age = ageText(asOf, fetchedAt);
   const up = (header?.change_pct ?? 0) >= 0;
   const moveColor = up ? "var(--signal-buy)" : "var(--signal-sell)";
 
@@ -76,25 +102,8 @@ export default function DashboardHeader({
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-        {/* 갱신이 실패해도 화면의 데이터는 남아 있다 — 언제 것인지 여기서 말해 준다. */}
-        <span style={{ fontSize: "var(--text-xs)", color: error ? "var(--signal-sell)" : "var(--text-tertiary)" }}>
-          {error ? `갱신 실패 · 마지막 데이터 ${age}` : `갱신 ${age}`}
-        </span>
-        <button
-          onClick={onRefresh}
-          disabled={isRefreshing}
-          style={{
-            appearance: "none", cursor: isRefreshing ? "default" : "pointer",
-            border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-            background: "var(--bg-inset)", color: "var(--text-secondary)",
-            padding: "var(--space-1) var(--space-3)", fontSize: "var(--text-xs)", fontWeight: 600,
-            opacity: isRefreshing ? 0.6 : 1, whiteSpace: "nowrap",
-          }}
-        >
-          {isRefreshing ? "갱신 중…" : "↻ 새로고침"}
-        </button>
-      </div>
+      {/* 갱신이 실패해도 화면의 데이터는 남아 있다 — 언제 것인지 여기서 말해 준다. */}
+      <RefreshLine asOf={asOf} fetchedAt={fetchedAt} isRefreshing={isRefreshing} error={error} onRefresh={onRefresh} />
     </div>
   );
 }

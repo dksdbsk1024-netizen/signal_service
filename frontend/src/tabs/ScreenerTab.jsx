@@ -1,6 +1,8 @@
 // 탭 — 종목 목록(시총상위). /api/screener 연결. 행 클릭 → 티커 변경 + 종합신호(탭1) 이동.
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { API, Card, SectionLabel, Banner, LabelBadge, fmtWon, fmtVolume } from "../ui.jsx";
+import useAutoRefresh from "../hooks/useAutoRefresh.js";
+import { RefreshLine } from "../sections/DashboardHeader.jsx";
 
 function scoreColor(s) {
   if (s >= 60) return "var(--signal-buy-strong)";
@@ -43,26 +45,18 @@ function ScoreBar({ score, provisional }) {
 }
 
 export default function ScreenerTab({ onPick }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const { data, error, loading, isRefreshing, fetchedAt, refresh } = useAutoRefresh(
+    async (signal) => {
+      const res = await fetch(`${API}/api/screener`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    [],
+  );
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    (async () => {
-      setLoading(true); setError(null);
-      try {
-        const res = await fetch(`${API}/api/screener`, { signal: ctrl.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setData(await res.json());
-      } catch (e) { if (e.name !== "AbortError") setError(e.message || "요청 실패"); }
-      finally { setLoading(false); }
-    })();
-    return () => ctrl.abort();
-  }, []);
-
-  if (error) return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
-  if (!data) return <Banner>{loading ? "스크리너 불러오는 중…" : "데이터 없음"}</Banner>;
+  // 갱신 실패라도 직전 목록은 그대로 둔다 — 첫 로드 실패만 화면을 통째로 비운다.
+  if (loading) return <Banner>스크리너 불러오는 중…</Banner>;
+  if (error && !data) return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
 
   const th = { fontSize: "var(--text-2xs)", color: "var(--text-tertiary)", fontWeight: 600, padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border-default)", textAlign: "left", whiteSpace: "nowrap" };
   const td = { padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--border-default)", verticalAlign: "middle" };
@@ -70,7 +64,12 @@ export default function ScreenerTab({ onPick }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
       <Card style={{ padding: "var(--space-4) var(--space-5)" }}>
-        <SectionLabel right={<span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>시총상위 {data.count}종목 · 종합신호 스코어 내림차순</span>}>
+        <SectionLabel right={
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
+            <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>시총상위 {data.count}종목 · 종합신호 스코어 내림차순</span>
+            <RefreshLine asOf={data.as_of} fetchedAt={fetchedAt} isRefreshing={isRefreshing} error={error} onRefresh={refresh} />
+          </div>
+        }>
           종목 목록 — 시세 + 종합신호 (행 클릭 → 종합 신호로 이동)
         </SectionLabel>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>

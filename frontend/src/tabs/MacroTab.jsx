@@ -1,7 +1,9 @@
 // 탭4 — 매크로. /api/macro 연결 (경제지표 = FRED/ECOS 실데이터, 시세 = yfinance 실데이터).
 // 섹션 A 경제지표 카드(실제/예상/이전 + 서프라이즈, 한/미 구분) · 섹션 B 시세(지수·환율·VIX). (macro-tab UI 킷 패턴)
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { API, SectionEyebrow, Card, SectionLabel, SegmentedControl, Banner, SourceTag, AsOfBadge } from "../ui.jsx";
+import useAutoRefresh from "../hooks/useAutoRefresh.js";
+import { RefreshLine } from "../sections/DashboardHeader.jsx";
 
 const REGION_FILTERS = [
   { id: "all", label: "전체" },
@@ -137,51 +139,39 @@ function CalRow({ ev }) {
   );
 }
 
-// 섹션별 로딩 안내 — 한 덩어리로 기다리지 않고 오는 대로 그리기 위한 자리표시.
-function SectionLoading({ children }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-4)", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--status-live)", opacity: 0.6 }} />
-      {children}
-    </div>
-  );
-}
-
 export default function MacroTab() {
   const [region, setRegion] = useState("all");
-  // 세 조각을 따로 받아 오는 대로 렌더한다(껍데기 먼저 → 섹션별 채우기).
-  //  base     : 소스 배지 + 발표 캘린더 (네트워크 없음 → 사실상 즉시)
-  //  indData  : 섹션 A 경제지표 (FRED, 병렬)
-  //  quotes   : 섹션 B 시세 (yfinance, 병렬)
-  const [base, setBase] = useState(null);
-  const [indData, setIndData] = useState(null);
-  const [quotesData, setQuotesData] = useState(null);
-  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    const grab = async (path, setter) => {
-      try {
-        const res = await fetch(`${API}/api/macro${path}`, { signal: ctrl.signal });
+  // 매크로 지표는 분 단위로 안 변한다 — 종합신호(60초)보다 느슨한 300초 주기.
+  // 세 엔드포인트를 하나로 묶는다: 셋 다 어차피 한 화면에서 같이 쓰이므로 상태를 셋
+  // 따로 들 이유가 없다(그리고 실패해도 직전 값 전체를 유지하는 규칙이 하나로 통일된다).
+  const { data, error, loading, isRefreshing, fetchedAt, refresh } = useAutoRefresh(
+    async (signal) => {
+      const grab = async (path) => {
+        const res = await fetch(`${API}/api/macro${path}`, { signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setter(await res.json());
-      } catch (e) {
-        if (e.name !== "AbortError") setError((prev) => prev || e.message || "요청 실패");
-      }
-    };
-    // 병렬 발사 — 서로 기다리지 않는다. 먼저 끝난 섹션부터 화면에 뜬다.
-    grab("/base", setBase);
-    grab("/indicators", setIndData);
-    grab("/quotes", setQuotesData);
-    return () => ctrl.abort();
-  }, []);
+        return res.json();
+      };
+      const [base, indicators, quotes] = await Promise.all([
+        grab("/base"), grab("/indicators"), grab("/quotes"),
+      ]);
+      return { base, indicators, quotes };
+    },
+    [],
+    { intervalMs: 300000 },
+  );
+
+  const base = data?.base;
+  const indData = data?.indicators;
+  const quotesData = data?.quotes;
 
   const indicators = useMemo(
     () => (indData?.indicators || []).filter((i) => region === "all" || i.region === region),
     [indData, region]
   );
 
-  if (error && !base && !indData && !quotesData)
+  if (loading) return <Banner>매크로 불러오는 중…</Banner>;
+  if (error && !data)
     return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
 
   const source = indData?.source || base?.source;
@@ -192,6 +182,9 @@ export default function MacroTab() {
       : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock (API 키 없음)</span>;
 
   const q = quotesData?.quotes;
+  // "Mock" 은 진짜 시각이 아니다 — 그대로 넘기면 ageText 가 Invalid Date 로 "—" 를 찍는다.
+  // 실데이터가 없을 땐 fetch 시각(fetchedAt)으로 대체한다.
+  const quotesAsOf = q?.as_of && q.as_of !== "Mock" ? q.as_of : null;
 
   // 발표 캘린더 — 카운트다운(다음 FOMC/CPI/금통위) + 날짜순 리스트(지난 7일~향후 45일).
   const cal = base?.calendar || [];
@@ -210,18 +203,15 @@ export default function MacroTab() {
       {/* 섹션 A · 경제지표 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)" }}>
         <SectionEyebrow index="A" title="경제지표 — 시장의 숲" />
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
           {sourceBadge}
           <SegmentedControl items={REGION_FILTERS} activeId={region} onChange={setRegion} />
+          <RefreshLine asOf={quotesAsOf} fetchedAt={fetchedAt} isRefreshing={isRefreshing} error={error} onRefresh={refresh} />
         </div>
       </div>
-      {indData == null
-        ? <SectionLoading>경제지표 불러오는 중…</SectionLoading>
-        : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
-            {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
-          </div>
-        )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
+        {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
+      </div>
 
       {/* 발표 캘린더 — 확정 상수 + 규칙 추정, 오늘 기준 D-day */}
       <Card style={{ padding: "var(--space-4) var(--space-5)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -239,11 +229,9 @@ export default function MacroTab() {
 
         {/* 날짜순 리스트 — 지난 이벤트 흐리게, 임박 강조 */}
         <div>
-          {base == null
-            ? <SectionLoading>발표 캘린더 불러오는 중…</SectionLoading>
-            : calList.length === 0
-              ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
-              : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
+          {calList.length === 0
+            ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
+            : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
         </div>
       </Card>
 
@@ -251,23 +239,17 @@ export default function MacroTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)" }}>
         <SectionEyebrow index="B" title="시세 — 보조 지표" />
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-          {q == null
-            ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>불러오는 중…</span>
-            : q.source === "yfinance"
-              ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
-              : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
-          {q && q.as_of && q.as_of !== "Mock" && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {q.as_of}</span>}
+          {q.source === "yfinance"
+            ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
+            : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
+          {quotesAsOf && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {quotesAsOf}</span>}
         </div>
       </div>
-      {q == null
-        ? <SectionLoading>시세 불러오는 중…</SectionLoading>
-        : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
-            {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
-            <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
-            <QuoteCard q={q.volatility} />
-          </div>
-        )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
+        {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
+        <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
+        <QuoteCard q={q.volatility} />
+      </div>
     </div>
   );
 }
