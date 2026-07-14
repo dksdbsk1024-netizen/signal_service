@@ -99,7 +99,7 @@ npm run dev
 | `STOCK_PROVIDER` | `auto` | `auto` = KIS 키 있으면 실데이터, 없으면 Mock. `mock` = 키가 있어도 강제 Mock. | 오프라인 개발, KIS 호출 한도 아끼기 |
 | `MACRO_LIVE_QUOTES` | `1` | 매크로 시세(yfinance) 네트워크 호출. `0` = Mock. | 오프라인 개발. yfinance는 키가 없어도 네트워크를 타므로 별도 노브가 필요 |
 | `COLLECT_ENABLED` | `1` | 앱 기동 시 백그라운드 수집 스케줄러. `0` = 끔. | 검증 스크립트를 돌릴 때(같은 앱키로 유량이 합산돼 `EGW00201`) |
-| `COLLECT_INTERVAL_SEC` | `300` | 수집 주기. 사이클이 더 길면 `max_instances=1`이 그냥 건너뛴다. | 신선도 vs 호출량 |
+| `COLLECT_INTERVAL_SEC` | `180` | 수집 주기. 사이클이 더 길면 `max_instances=1`이 그냥 건너뛴다. 장 밖(평일 09:00~15:40 밖)에는 사이클이 즉시 스킵된다. | 신선도 vs 호출량 |
 | `COLLECT_WORKERS` | `24` | 동시에 수집하는 종목 수. 유량 상한이 아니라 KIS 왕복 지연을 흡수하는 손잡이. | 사이클이 느릴 때 |
 | `KIS_MAX_RPS` | `12` | KIS 호출 유량 상한(토큰버킷, 버스트 없음). 문서상 한도는 20이지만 15에서도 거부당했다. | `EGW00201`이 뜰 때 낮춘다 |
 | `SNAPSHOT_DB_PATH` | `backend/data/snapshots.db` | 스냅샷 SQLite 경로. 배포 시 **영구 볼륨**으로. | 컨테이너 재시작 시 스냅샷 보존 |
