@@ -1,17 +1,23 @@
 """종합 신호 + 매매 계획 (탭1). 게이지·기여도·매매계획을 한 응답에.
 
-지표·스코어는 수집기가 미리 계산해 스냅샷에 넣어 둔 걸 읽는다.
-매매계획(trade_plan)은 저장하지 않는다 — 스냅샷의 last_close·last_atr 과
-사용자 입력(계좌·리스크·진입가)만으로 나오는 순수 함수라 매 요청에 계산한다.
+스코어링은 두 단계다:
+- 무거운 쪽(지표 계산, KIS 필요)은 수집기가 미리 해서 스냅샷에 넣어 둔다.
+- 가벼운 쪽(지표 → 점수 → 카테고리 가중합)은 순수 계산이라 여기서 매 요청 한다.
+
+그래서 사용자 가중치(?weights=)로 재채점해도 KIS 를 부르지 않는다 — 읽기전용 유지.
+매매계획(trade_plan)도 같은 이유로 저장하지 않는다: last_close·last_atr 과
+사용자 입력(계좌·리스크·진입가)만으로 나오는 순수 함수다.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ...core import collector, scoring
+from ...core import collector, config, scoring
+from ...core.indicators import IndicatorSet
 from ...core.snapshot_store import get_store
 
 router = APIRouter(prefix="/api", tags=["signal"])
@@ -69,6 +75,60 @@ def _header(snapshot: dict) -> dict:
     }
 
 
+def _parse_weights(raw: str | None) -> dict[str, float] | None:
+    """?weights={"flow":45,...} → 검증된 카테고리 가중치. 미지정이면 None.
+
+    부분 지정을 안 받는 이유: score_stock 은 weights.get(cat, 0) 이라 빠진
+    카테고리가 조용히 가중치 0이 된다 — 오타 하나가 지표를 통째로 지운다.
+    합이 100 일 필요는 없다. score_stock 이 total_w 로 정규화한다.
+    """
+    if raw is None:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"weights 가 JSON 이 아니다: {e}") from e
+
+    if not isinstance(parsed, dict) or set(parsed) != set(config.CATEGORIES):
+        raise HTTPException(400, f"weights 키는 정확히 {config.CATEGORIES} 여야 한다")
+
+    weights: dict[str, float] = {}
+    for cat, value in parsed.items():
+        # bool 은 int 의 서브클래스다 — True 가 가중치 1로 통과하는 걸 막는다.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(400, f"{cat} 가중치가 숫자가 아니다")
+        if not 0 <= value <= 100:
+            raise HTTPException(400, f"{cat} 가중치는 0~100 이어야 한다 (받은 값: {value})")
+        weights[cat] = float(value)
+
+    if sum(weights.values()) <= 0:
+        raise HTTPException(400, "가중치 합이 0이면 스코어가 정의되지 않는다")
+    return weights
+
+
+def _signal(snapshot: dict, weights: dict[str, float] | None) -> dict:
+    """스냅샷 → 신호 블록. 가중치를 주면 원지표에서 재채점한다."""
+    if weights is None:
+        # 기본 경로 — 수집 시점에 DEFAULT_WEIGHTS 로 구운 값을 그대로 낸다.
+        return {
+            "final_score": snapshot["final_score"],
+            "label": snapshot["label"],
+            "contributions": json.loads(snapshot["contributions_json"]),
+            "weights": config.DEFAULT_WEIGHTS,
+        }
+
+    # 재채점 — 순수 계산이다. provider 를 건드리지 않으므로 읽기전용을 깨지 않는다.
+    ind = IndicatorSet(**json.loads(snapshot["indicators_json"]))
+    result = scoring.score_stock(ind, weights=weights)
+    return {
+        "final_score": result.final_score,
+        "label": result.label,
+        "contributions": [asdict(c) for c in result.contributions],
+        "weights": weights,
+    }
+
+
 @router.get("/signal/{ticker}")
 def get_signal(
     ticker: str,
@@ -76,6 +136,9 @@ def get_signal(
     risk_pct: float = Query(2.0, description="감당 리스크(%)"),
     entry: float | None = Query(None, description="진입가(미지정 시 현재가)"),
     direction: str = Query("long", pattern="^(long|short)$"),
+    weights: str | None = Query(
+        None, description='카테고리 가중치 JSON. 예: {"flow":45,...}. 미지정 시 기본 가중치'
+    ),
 ):
     snapshot = _snapshot_or_collect(ticker)
 
@@ -86,11 +149,7 @@ def get_signal(
     return {
         "ticker": ticker,
         "header": _header(snapshot),
-        "signal": {
-            "final_score": snapshot["final_score"],
-            "label": snapshot["label"],
-            "contributions": json.loads(snapshot["contributions_json"]),
-        },
+        "signal": _signal(snapshot, _parse_weights(weights)),
         "trade_plan": {**plan, "position": position},
         # 수집 시각. 프론트가 "N초 전 갱신" / "지연" 배지에 쓴다.
         "as_of": snapshot["as_of"],

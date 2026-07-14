@@ -36,6 +36,9 @@ COLUMNS: tuple[str, ...] = (
     "final_score",
     "label",
     "contributions_json",
+    # 원지표(IndicatorSet). 채점 전 단계라 사용자 가중치로 재채점할 수 있다.
+    # final_score·contributions_json 은 DEFAULT_WEIGHTS 로 구운 기준선이다.
+    "indicators_json",
     "last_close",
     "last_atr",
     "market_status",
@@ -61,6 +64,7 @@ CREATE TABLE IF NOT EXISTS stock_snapshot (
     final_score        REAL,
     label              TEXT,
     contributions_json TEXT,
+    indicators_json    TEXT,
     last_close         REAL,
     last_atr           REAL,
     market_status      TEXT,
@@ -102,7 +106,27 @@ class SnapshotStore:
             # 인메모리 DB 는 WAL 을 지원하지 않는다(파일이 없으니 -wal 도 없다).
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """_SCHEMA 에는 있는데 실제 테이블에 없는 컬럼을 붙인다.
+
+        CREATE TABLE IF NOT EXISTS 는 기존 파일에 컬럼을 추가해 주지 않는다 —
+        그대로 두면 다음 upsert 가 "no column named ..." 로 터진다.
+
+        붙인 컬럼이 NULL 인 옛 행은 지운다. NULL 을 읽는 쪽에서 분기 처리하면
+        그 분기가 영원히 남는다. 스냅샷은 매 수집 사이클에 전부 덮어써지므로
+        비용은 한 사이클치 공백이고, 라우트는 _snapshot_or_collect 로 메꾼다.
+        """
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(stock_snapshot)")}
+        missing = [c for c in COLUMNS if c not in have]
+        if not missing:
+            return
+
+        for col in missing:
+            self._conn.execute(f"ALTER TABLE stock_snapshot ADD COLUMN {col}")
+        self._conn.execute("DELETE FROM stock_snapshot")
 
     def upsert(self, row: dict) -> None:
         """한 종목의 스냅샷을 덮어쓴다. 키가 하나라도 빠지면 KeyError.

@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
+
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import deps
 from backend.api.main import app
-from backend.core import collector
+from backend.core import collector, config, scoring
+from backend.core.indicators import IndicatorSet
 from backend.core.snapshot_store import close_store, get_store
 
 client = TestClient(app)
@@ -180,3 +184,93 @@ def test_signal_404_when_collection_also_fails(monkeypatch):
     monkeypatch.setattr(collector, "collect_ticker", broken)
 
     assert client.get("/api/signal/999999").status_code == 404
+
+
+# ── 사용자 가중치 재채점 ────────────────────────────────────
+# 스코어링은 두 단계다: 지표 계산(무거움, 수집기)과 점수화·가중합(순수, 라우트).
+# 재채점이 KIS 를 부르지 않는다는 것이 이 분리의 전제다.
+FLOW_HEAVY = json.dumps({
+    "flow": 80, "trend": 5, "momentum": 5, "volume": 5, "volatility": 5,
+})
+
+
+def test_signal_without_weights_returns_the_stored_score_verbatim(seeded, no_provider):
+    """기본 경로는 재계산하지 않는다 — 수집 시점에 구운 값 그대로."""
+    body = client.get(f"/api/signal/{TICKER}").json()
+    stored = get_store().get(TICKER)
+
+    assert body["signal"]["final_score"] == stored["final_score"]
+    assert body["signal"]["label"] == stored["label"]
+    assert body["signal"]["contributions"] == json.loads(stored["contributions_json"])
+    assert body["signal"]["weights"] == config.DEFAULT_WEIGHTS
+
+
+def test_signal_rescores_without_touching_kis(seeded, no_provider):
+    """이 테스트가 곧 설계의 근거다 — 가중치를 바꿔도 provider 를 건드리면 안 된다.
+
+    no_provider 가 PROVIDER 를 '부르면 터지는' 스텁으로 바꿔 뒀다. 200 이 나오면
+    재채점 경로가 순수 계산이라는 뜻이다.
+    """
+    res = client.get(f"/api/signal/{TICKER}?weights={FLOW_HEAVY}")
+
+    assert res.status_code == 200
+    assert res.json()["signal"]["label"]
+
+
+def test_signal_weights_change_the_score(seeded, no_provider):
+    default = client.get(f"/api/signal/{TICKER}").json()["signal"]
+    weighted = client.get(f"/api/signal/{TICKER}?weights={FLOW_HEAVY}").json()["signal"]
+
+    assert weighted["final_score"] != default["final_score"]
+    assert weighted["weights"]["flow"] == 80
+
+
+def test_signal_rescore_matches_scoring_called_directly(seeded, no_provider):
+    """라우트가 채점 로직을 재구현하지 않았음을 고정한다."""
+    stored = get_store().get(TICKER)
+    ind = IndicatorSet(**json.loads(stored["indicators_json"]))
+    expected = scoring.score_stock(ind, weights=json.loads(FLOW_HEAVY))
+
+    signal = client.get(f"/api/signal/{TICKER}?weights={FLOW_HEAVY}").json()["signal"]
+
+    assert signal["final_score"] == expected.final_score
+    assert signal["label"] == expected.label
+    assert signal["contributions"] == [asdict(c) for c in expected.contributions]
+
+
+def test_signal_rescore_keeps_the_contribution_keys(seeded, no_provider):
+    body = client.get(f"/api/signal/{TICKER}?weights={FLOW_HEAVY}").json()
+
+    assert set(body["signal"]["contributions"][0]) == {
+        "category", "name", "score", "weight", "contribution", "detail",
+    }
+
+
+def test_signal_weights_need_not_sum_to_100(seeded, no_provider):
+    """score_stock 이 total_w 로 정규화한다 — 비율이 같으면 결과도 같다."""
+    hundred = json.dumps({"flow": 40, "trend": 20, "momentum": 20,
+                          "volume": 10, "volatility": 10})
+    doubled = json.dumps({"flow": 80, "trend": 40, "momentum": 40,
+                          "volume": 20, "volatility": 20})
+
+    a = client.get(f"/api/signal/{TICKER}?weights={hundred}").json()["signal"]
+    b = client.get(f"/api/signal/{TICKER}?weights={doubled}").json()["signal"]
+
+    assert a["final_score"] == b["final_score"]
+
+
+@pytest.mark.parametrize("bad, why", [
+    ("not json", "JSON 이 아니다"),
+    ('{"flow": 100}', "카테고리 누락 — 나머지가 조용히 0이 되면 안 된다"),
+    ('{"flow": 50, "trend": 20, "momentum": 20, "volume": 10, "sentiment": 10}',
+     "모르는 카테고리"),
+    ('{"flow": -10, "trend": 20, "momentum": 20, "volume": 10, "volatility": 10}',
+     "음수 가중치"),
+    ('{"flow": 0, "trend": 0, "momentum": 0, "volume": 0, "volatility": 0}',
+     "합이 0 — 스코어가 정의되지 않는다"),
+    ('{"flow": "많이", "trend": 20, "momentum": 20, "volume": 10, "volatility": 10}',
+     "숫자가 아님"),
+    ('[30, 20, 20, 15, 15]', "dict 가 아님"),
+])
+def test_signal_rejects_bad_weights(seeded, no_provider, bad, why):
+    assert client.get(f"/api/signal/{TICKER}?weights={bad}").status_code == 400, why

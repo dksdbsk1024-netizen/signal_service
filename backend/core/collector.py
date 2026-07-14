@@ -81,6 +81,9 @@ def collect_ticker(ticker: str, name: str, store: SnapshotStore | None = None,
         "contributions_json": json.dumps(
             [asdict(c) for c in result.contributions], ensure_ascii=False
         ),
+        # 채점 전 원지표. 위 final_score 는 DEFAULT_WEIGHTS 로 구운 값이라
+        # 사용자 가중치로 재채점하려면 이게 필요하다(signal 라우트).
+        "indicators_json": json.dumps(asdict(ind), ensure_ascii=False),
         "last_close": ind.last_close,
         "last_atr": ind.last_atr,
         "market_status": header["market_status"],

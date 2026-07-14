@@ -4,6 +4,7 @@ import {
   API, Ds, NAME_BY_TICKER, fmtWon, fmtVolume,
   SectionEyebrow, Card, SectionLabel, FieldLabel, NumberField, Banner, LabelBadge,
 } from "../ui.jsx";
+import { normalizeWeights } from "../weights.js";
 
 const { DirectionGauge, ContributionBar, StockHeader } = Ds;
 
@@ -54,7 +55,7 @@ function TradePlanView({ plan }) {
   );
 }
 
-export default function OverviewTab({ ticker }) {
+export default function OverviewTab({ ticker, weights }) {
   const [account, setAccount] = useState(10_000_000);
   const [riskPct, setRiskPct] = useState(1);
   const [entry, setEntry] = useState(null); // null → 서버가 현재가로 채움
@@ -72,6 +73,11 @@ export default function OverviewTab({ ticker }) {
       try {
         const qs = new URLSearchParams({ account: String(account), risk_pct: String(riskPct) });
         if (entry != null) qs.set("entry", String(entry));
+        // 서버는 이 가중치로 스냅샷의 원지표를 재채점한다. KIS 는 안 부른다.
+        // 합-100 으로 정규화해 보내는 이유: 응답의 contributions[].weight 를 UI 가 "%"로
+        // 찍는다. raw(예: 100/20/20/15/15)를 그대로 보내면 합이 170% 인 백분율이 화면에
+        // 나오고, 설정 패널이 보여 주는 정규화 % 와도 어긋난다. 비율이 같으니 점수는 동일하다.
+        if (weights) qs.set("weights", JSON.stringify(normalizeWeights(weights)));
         const res = await fetch(`${API}/api/signal/${ticker}?${qs}`, { signal: ctrl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         setData(await res.json());
@@ -80,7 +86,9 @@ export default function OverviewTab({ ticker }) {
       } finally { setLoading(false); }
     }, 300);
     return () => { clearTimeout(timer); ctrl.abort(); };
-  }, [ticker, account, riskPct, entry]);
+    // weights 는 객체다 — App 이 setWeights 로만 새 객체를 만들기에 참조 비교가 안전하다.
+    // 여기 인라인 리터럴을 넘기면 매 렌더 refetch 가 돈다.
+  }, [ticker, account, riskPct, entry, weights]);
 
   const header = data?.header;
   const signal = data?.signal;

@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Ds, WATCHLIST, NAME_BY_TICKER, TABS, Banner } from "./ui.jsx";
+import { DEFAULT_WEIGHTS, loadWeights, saveWeights } from "./weights.js";
 import OverviewTab from "./tabs/OverviewTab.jsx";
 import TechnicalTab from "./tabs/TechnicalTab.jsx";
 import FlowTab from "./tabs/FlowTab.jsx";
@@ -10,10 +11,6 @@ const { TabNavigation, StockSearchBar } = Ds;
 // SettingsPanel / SettingsGearButton 은 _ds_bundle.js 가 window 전역에 붙인다.
 const SettingsPanel = window.SettingsPanel;
 const SettingsGearButton = window.SettingsGearButton;
-
-function ComingSoon({ label }) {
-  return <Banner>{label} 탭은 다음 단계에서 연결됩니다. (API는 준비됨)</Banner>;
-}
 
 // 안전망 — 특정 하위 컴포넌트(예: 디자인 번들 컴포넌트)가 렌더 중 던져도 앱 전체가
 // 백지화되지 않도록 격리한다.
@@ -32,18 +29,23 @@ export default function App() {
   const [ticker, setTicker] = useState("005930");
   const [activeTab, setActiveTab] = useState("screener");
   const [showSettings, setShowSettings] = useState(false);
+  // 스코어 가중치. 설정 패널이 고치고 탭1이 API 에 실어 보낸다.
+  // 객체 정체성이 곧 OverviewTab 의 refetch 트리거다 — setWeights 로만 새로 만든다.
+  const [weights, setWeights] = useState(loadWeights);
+
+  useEffect(() => { saveWeights(weights); }, [weights]);
 
   const suggestions = useMemo(() => WATCHLIST, []);
   const name = NAME_BY_TICKER[ticker] || ticker;
 
   const renderTab = () => {
     switch (activeTab) {
-      case "overview": return <OverviewTab ticker={ticker} />;
+      case "overview": return <OverviewTab ticker={ticker} weights={weights} />;
       case "technical": return <TechnicalTab ticker={ticker} />;
       case "flow": return <FlowTab ticker={ticker} />;
       case "macro": return <MacroTab />;
       case "screener": return <ScreenerTab onPick={(t) => { setTicker(t); setActiveTab("overview"); }} />;
-      default: return <OverviewTab ticker={ticker} />;
+      default: return <OverviewTab ticker={ticker} weights={weights} />;
     }
   };
 
@@ -67,7 +69,13 @@ export default function App() {
       {/* 설정 패널 (우측 슬라이드) */}
       {SettingsPanel && (
         <ErrorBoundary label="설정 패널">
-          <SettingsPanel open={showSettings} onClose={() => setShowSettings(false)} />
+          <SettingsPanel
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            weights={weights}
+            defaultWeights={DEFAULT_WEIGHTS}
+            onWeightsChange={setWeights}
+          />
         </ErrorBoundary>
       )}
 

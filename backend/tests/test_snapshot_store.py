@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 
 import pytest
 
-from backend.core.snapshot_store import SnapshotStore
+from backend.core.snapshot_store import COLUMNS, SnapshotStore
 
 
 def _row(ticker: str = "005930", **over) -> dict:
@@ -31,6 +32,17 @@ def _row(ticker: str = "005930", **over) -> dict:
         "contributions_json": json.dumps(
             [{"category": "trend", "name": "추세", "contribution": 12.0}],
             ensure_ascii=False,
+        ),
+        "indicators_json": json.dumps(
+            {
+                "trend": {"ma_alignment": 1.0},
+                "momentum": {"rsi": 62.0},
+                "volume": {"surge": 1.4},
+                "volatility": {"pct_b": 0.7},
+                "flow": {"smart_money_ratio": 0.02},
+                "last_close": 71_000.0,
+                "last_atr": 850.0,
+            }
         ),
         "last_close": 71_000.0,
         "last_atr": 850.0,
@@ -118,6 +130,64 @@ def test_partial_row_rejected_rather_than_written_silently(store):
         store.upsert({"ticker": "005930", "name": "삼성전자"})
 
     assert store.get("005930") is None
+
+
+# ── 마이그레이션 ────────────────────────────────────────────
+# CREATE TABLE IF NOT EXISTS 는 기존 파일에 새 컬럼을 붙여 주지 않는다.
+# 그대로 두면 배포 직후 첫 upsert 가 "no column named ..." 로 터진다.
+def _legacy_db(path: str) -> None:
+    """indicators_json 이 없던 시절의 테이블을 만들고 한 행을 넣는다."""
+    legacy = [c for c in COLUMNS if c != "indicators_json"]
+    # ticker 의 PK 는 구스키마에도 있었다 — upsert 의 ON CONFLICT 가 이걸 물고 돈다.
+    ddl = ", ".join("ticker TEXT PRIMARY KEY" if c == "ticker" else c for c in legacy)
+    conn = sqlite3.connect(path)
+    conn.execute(f"CREATE TABLE stock_snapshot ({ddl})")
+    conn.execute(
+        f"INSERT INTO stock_snapshot ({', '.join(legacy)}) "
+        f"VALUES ({', '.join('?' * len(legacy))})",
+        tuple(_row()[c] for c in legacy),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_missing_column_is_added_to_an_existing_db(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    _legacy_db(path)
+
+    s = SnapshotStore(path)
+    try:
+        s.upsert(_row())  # 마이그레이션 전이라면 OperationalError 로 터진다
+        assert s.get("005930") == _row()
+    finally:
+        s.close()
+
+
+def test_migration_drops_rows_that_predate_the_new_column(tmp_path):
+    """옛 행은 indicators_json 이 NULL 이라 재채점할 수 없다 — 남기지 않고 지운다.
+
+    NULL 을 읽는 쪽에서 분기 처리하면 그 분기가 영원히 남는다. 다음 수집 사이클이 채운다.
+    """
+    path = str(tmp_path / "legacy.db")
+    _legacy_db(path)
+
+    s = SnapshotStore(path)
+    try:
+        assert s.get_all() == []
+    finally:
+        s.close()
+
+
+def test_migration_is_idempotent(tmp_path):
+    path = str(tmp_path / "snapshots.db")
+    SnapshotStore(path).close()
+
+    s = SnapshotStore(path)  # 두 번째 오픈 — 붙일 컬럼이 없다
+    try:
+        s.upsert(_row())
+        assert s.get("005930") == _row()
+    finally:
+        s.close()
 
 
 def test_concurrent_writes_do_not_corrupt(store):

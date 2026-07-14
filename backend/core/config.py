@@ -2,7 +2,8 @@
 
 가중치·라벨 임계값·지표 파라미터를 여기서만 정의한다. 스코어링 로직(scoring.py)과
 지표 계산(indicators.py)은 모두 이 모듈의 상수를 참조하므로, 튜닝은 이 파일만 고치면 된다.
-사용자 커스터마이징(설정 패널)은 DEFAULT_WEIGHTS를 런타임에 덮어쓰는 형태로 이뤄진다.
+사용자 커스터마이징(설정 패널)은 요청마다 가중치를 실어 보내는 형태다 — 전역 상태를
+덮어쓰지 않는다(서버는 스테이트리스, 사용자별 가중치가 서로를 오염시키지 않는다).
 """
 
 from __future__ import annotations
@@ -21,20 +22,16 @@ CATEGORY_LABELS: dict[str, str] = {
 }
 
 # ── 가중치 ─────────────────────────────────────────────────────
-# 카테고리별 가중치(%). 합계 100 기준. 사용자가 설정에서 조절.
+# 카테고리별 가중치(%). 합계 100 기준. 수집기가 스냅샷을 구울 때 쓰는 기준선이고,
+# 사용자가 설정 패널에서 조절하면 signal 라우트가 ?weights= 로 받아 재채점한다.
+# 프리셋은 프론트(SettingsPanel)가 갖는다 — 사용자 가중치는 항상 명시적으로
+# 전송되므로 백엔드가 프리셋 이름을 알 이유가 없다.
 DEFAULT_WEIGHTS: dict[str, float] = {
     "flow": 30,
     "trend": 20,
     "momentum": 20,
     "volume": 15,
     "volatility": 15,
-}
-
-# 프리셋 — 설정 패널의 "수급 중시 / 모멘텀 중시 / 균형". 각 합계 100.
-PRESETS: dict[str, dict[str, float]] = {
-    "수급중시": {"flow": 45, "trend": 15, "momentum": 15, "volume": 15, "volatility": 10},
-    "모멘텀중시": {"flow": 20, "trend": 20, "momentum": 35, "volume": 15, "volatility": 10},
-    "균형": {"flow": 20, "trend": 20, "momentum": 20, "volume": 20, "volatility": 20},
 }
 
 # ── 라벨 밴드 (DESIGN.md §8) ────────────────────────────────────

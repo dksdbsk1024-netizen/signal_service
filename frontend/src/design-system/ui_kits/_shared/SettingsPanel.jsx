@@ -242,11 +242,31 @@ function SettingsParamRow({ label, hint, children }) {
   );
 }
 
+// 아직 백엔드에 닿지 않는 컨트롤에 붙인다. 조용히 무시되는 설정은 잘못된 설정보다 나쁘다.
+function SettingsNotWiredBadge() {
+  return (
+    <span
+      title="지표를 다시 계산해야 해서(수집기) 아직 반영되지 않습니다"
+      style={{
+        fontSize: "var(--text-2xs)",
+        fontWeight: 700,
+        color: "var(--text-tertiary)",
+        background: "var(--bg-inset)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "var(--radius-sm)",
+        padding: "1px 6px",
+      }}
+    >
+      미연동
+    </span>
+  );
+}
+
 function SettingsIndicatorParamsCard({ params, setParams }) {
   const set = (key) => (v) => setParams((p) => ({ ...p, [key]: v }));
   return (
     <SettingsCard>
-      <SettingsSectionLabel>지표 파라미터</SettingsSectionLabel>
+      <SettingsSectionLabel right={<SettingsNotWiredBadge />}>지표 파라미터</SettingsSectionLabel>
       <div style={{ display: "flex", flexDirection: "column" }}>
         <SettingsParamRow label="RSI 기간" hint="과매수/과매도 판정 구간">
           <SettingsNumberStepper value={params.rsiPeriod} onChange={set("rsiPeriod")} min={2} max={60} suffix="일" />
@@ -304,7 +324,7 @@ function SettingsToggle({ checked, onChange }) {
 function SettingsAlertCard({ alert, setAlert }) {
   return (
     <SettingsCard>
-      <SettingsSectionLabel>알림 임계값</SettingsSectionLabel>
+      <SettingsSectionLabel right={<SettingsNotWiredBadge />}>알림 임계값</SettingsSectionLabel>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
@@ -401,32 +421,39 @@ function SettingsGearButton({ onClick }) {
   );
 }
 
-// 우측 슬라이드 패널 — 가중치/프리셋/지표 파라미터/알림, 이전 "탭6 — 설정"과 동일한 내용.
-function SettingsPanel({ open, onClose }) {
-  const [activePreset, setActivePreset] = React.useState("balanced");
-  const [raw, setRaw] = React.useState({ ...SETTINGS_PRESETS.balanced.weights });
+// 어떤 프리셋과도 안 맞으면 null — 슬라이더를 건드린 순간 프리셋 칩이 풀린다.
+function settingsMatchPreset(raw) {
+  const id = Object.keys(SETTINGS_PRESETS).find((key) =>
+    SETTINGS_FACTORS.every((f) => SETTINGS_PRESETS[key].weights[f.key] === raw[f.key])
+  );
+  return id || null;
+}
+
+// 우측 슬라이드 패널.
+//
+// 가중치는 controlled 다 — App 이 들고 있고 localStorage 에 쓰고 탭1이 API 로 보낸다.
+// 여기 로컬 state 로 두면 패널 안에서만 살다 죽는다(이전 버전의 버그).
+//
+// 지표 파라미터·알림은 아직 로컬이다. 적용하려면 지표를 다시 계산해야 해서(수집기·KIS)
+// 가중치처럼 요청 시점 재채점으로는 안 된다. 그때까지 "미연동"으로 표시한다 —
+// 조용히 아무 일도 안 하는 컨트롤이 없는 컨트롤보다 나쁘다.
+function SettingsPanel({ open, onClose, weights: raw, defaultWeights, onWeightsChange }) {
   const [params, setParams] = React.useState({ rsiPeriod: 14, maShort: 5, maLong: 20, bbPeriod: 20, atrPeriod: 14 });
   const [alert, setAlert] = React.useState({ enabled: true, threshold: 60 });
-  const [savedAt, setSavedAt] = React.useState(null);
 
+  // 슬라이더는 raw(0~100)를 잡고, 화면 % 는 합-100 정규화 값을 보여 준다.
+  // 서버로도 raw 를 그대로 보낸다 — score_stock 이 합으로 나눠 정규화하므로 결과는 같고,
+  // 슬라이더 하나를 움직일 때 나머지가 따라 튀지 않는다.
   const weights = settingsNormalizeWeights(raw);
+  const activePreset = settingsMatchPreset(raw);
 
-  const applyPreset = (id) => {
-    setActivePreset(id);
-    setRaw({ ...SETTINGS_PRESETS[id].weights });
-  };
-
-  const handleSlider = (key, value) => {
-    setActivePreset(null);
-    setRaw((r) => ({ ...r, [key]: value }));
-  };
+  const applyPreset = (id) => onWeightsChange({ ...SETTINGS_PRESETS[id].weights });
+  const handleSlider = (key, value) => onWeightsChange({ ...raw, [key]: value });
 
   const reset = () => {
-    setActivePreset("balanced");
-    setRaw({ ...SETTINGS_PRESETS.balanced.weights });
+    onWeightsChange({ ...defaultWeights });
     setParams({ rsiPeriod: 14, maShort: 5, maLong: 20, bbPeriod: 20, atrPeriod: 14 });
     setAlert({ enabled: true, threshold: 60 });
-    setSavedAt(null);
   };
 
   if (!open) return null;
@@ -495,12 +522,11 @@ function SettingsPanel({ open, onClose }) {
           <SettingsPreviewCard weights={weights} />
         </div>
 
+        {/* 저장 버튼은 없다 — 가중치는 바꾸는 즉시 탭1에 적용되고 브라우저에 저장된다. */}
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-4) var(--space-5)", borderTop: "1px solid var(--border-default)", flexShrink: 0 }}>
-          {savedAt && (
-            <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)", marginRight: "auto" }}>
-              {savedAt.toLocaleTimeString("ko-KR", { hour12: false })} 저장됨
-            </div>
-          )}
+          <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)", marginRight: "auto" }}>
+            가중치는 바꾸는 즉시 적용·저장됩니다
+          </div>
           <button
             onClick={reset}
             style={{
@@ -515,23 +541,7 @@ function SettingsPanel({ open, onClose }) {
               borderRadius: "var(--radius-sm)",
             }}
           >
-            초기화
-          </button>
-          <button
-            onClick={() => setSavedAt(new Date())}
-            style={{
-              appearance: "none",
-              cursor: "pointer",
-              padding: "var(--space-2) var(--space-5)",
-              fontSize: "var(--text-sm)",
-              fontWeight: "var(--weight-semibold)",
-              color: "var(--text-on-signal)",
-              background: "var(--accent)",
-              border: "1px solid var(--accent)",
-              borderRadius: "var(--radius-sm)",
-            }}
-          >
-            저장
+            기본값으로 초기화
           </button>
         </div>
       </div>

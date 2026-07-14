@@ -12,6 +12,7 @@ import pytest
 
 from backend.api import deps
 from backend.core import collector, scoring
+from backend.core.indicators import IndicatorSet
 from backend.core.kis import KISAuthError
 from backend.core.snapshot_store import COLUMNS, SnapshotStore
 
@@ -71,6 +72,19 @@ def test_collect_ticker_serializes_contributions_like_the_signal_route(store):
     assert set(contributions[0]) == {
         "category", "name", "score", "weight", "contribution", "detail",
     }
+
+
+def test_collect_ticker_stores_indicators_that_roundtrip_losslessly(store):
+    """signal 라우트가 이걸 IndicatorSet 으로 되살려 사용자 가중치로 재채점한다.
+
+    한 필드라도 유실되면 재채점 결과가 조용히 달라진다 — 전체 동일성으로 고정한다.
+    """
+    _ohlcv, _flow, ind = deps.load_indicators(TICKER)
+
+    collector.collect_ticker(TICKER, "삼성전자", store=store)
+
+    stored = IndicatorSet(**json.loads(store.get(TICKER)["indicators_json"]))
+    assert stored == ind
 
 
 def test_collect_ticker_carries_source_flags_from_the_header(store):
