@@ -14,7 +14,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ..core.indicators import IndicatorSet, compute_indicators
-from ..core.market_hours import market_status  # noqa: F401 — 라우트가 deps 에서 import 한다
+from ..core.market_hours import market_status
 from ..core.providers import KISProvider, MacroDataProvider, MockProvider, StockProvider
 
 # backend/.env 로드 (KIS·FRED 키 등). 이미 환경에 있으면 유지.

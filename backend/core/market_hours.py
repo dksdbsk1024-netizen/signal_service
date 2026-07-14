@@ -2,7 +2,15 @@
 
 두 창이 다르다. market_status 는 KRX 정규장(09:00~15:30)을 그대로 말하고,
 should_collect 는 마감 뒤 10분을 더 연다. 마감 시각에 게이트를 닫으면 마지막
-사이클(약 160초)이 종가를 담기 전에 잘려, 그날 마지막 스냅샷이 장중 값으로 남는다.
+사이클(실측 약 381초)이 종가를 담기 전에 잘려, 그날 마지막 스냅샷이 장중 값으로 남는다.
+
+should_collect 가 막는 것은 **스케줄러 사이클뿐이다**. 장 밖 KIS 호출이 0 이 되는 게 아니다:
+- routes/signal.py `_snapshot_or_collect`, routes/screener.py `_warm_cold_store` 는 스냅샷이
+  비어 있으면 그 자리에서 collect_ticker 를 부른다. 일부러 게이트를 안 걸었다 — 콜드 스타트
+  사용자에게 빈 화면을 주느니 몇 번 더 부르는 게 낫다. 사람 하나가 부른, 끝이 있는 호출이다.
+- routes/technical.py, routes/flow.py 는 애초에 스냅샷을 안 쓰고 매 요청 KIS 를 부른다.
+  이쪽의 무한 폴링은 프론트(hooks/useAutoRefresh 의 enabled)가 market_status 로 끊는다.
+게이트가 죽이는 것은 "아무도 안 보는데 밤새 도는" 주기적 호출이다.
 
 KRX 휴장일은 모른다(요일과 시각만 본다). 휴장일엔 사이클이 헛돌지만 시세가 변하지
 않아 upsert 가 무해하다 — 공휴일 달력은 별건이다.

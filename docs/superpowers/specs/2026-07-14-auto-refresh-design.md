@@ -4,7 +4,7 @@
 
 ## 배경
 
-백엔드는 이미 무인 갱신 중이다. `backend/api/main.py`의 lifespan에서 APScheduler가 부팅 1초 후 첫 실행, 이후 `COLLECT_INTERVAL_SEC`(기본 300초) 주기로 `run_cycle()`을 돌린다. 한 사이클은 유니버스 200종목을 24개 워커로 병렬 수집해 SQLite 스냅샷(`backend/data/snapshots.db`)에 종목당 upsert 하며, 약 160초가 걸린다. 모든 FastAPI 라우트는 이 스냅샷만 읽는다.
+백엔드는 이미 무인 갱신 중이다. `backend/api/main.py`의 lifespan에서 APScheduler가 부팅 1초 후 첫 실행, 이후 `COLLECT_INTERVAL_SEC`(기본 300초) 주기로 `run_cycle()`을 돌린다. 한 사이클은 유니버스 200종목을 24개 워커로 병렬 수집해 SQLite 스냅샷(`backend/data/snapshots.db`)에 종목당 upsert 하며, 실측 약 381초가 걸린다. `/api/signal`과 `/api/screener`는 이 스냅샷을 읽는다(`/api/technical`·`/api/flow`는 아니다 — 매 요청 KIS 를 직접 부른다).
 
 빠진 것은 두 가지다.
 
@@ -39,7 +39,7 @@
 
 ### 2. 수집 주기와 게이트
 
-- `collector.py`의 `COLLECT_INTERVAL_SEC` 기본값을 300 → 180 으로 낮춘다. 사이클이 약 160초이므로 여유는 20초다. 겹치더라도 APScheduler 잡이 `coalesce=True`라 밀린 실행은 합쳐진다.
+- `collector.py`의 `COLLECT_INTERVAL_SEC` 기본값을 300 → 180 으로 낮춘다. **여유는 없다**: 유니버스 200종목 1사이클은 실측 381초(GET 2,574회, 6.8 req/s)로, 180초든 300초든 어떤 주기보다도 길다. 즉 `max_instances=1` + `coalesce=True` 때문에 장중에는 사실상 사이클이 끝나는 즉시 다음 사이클이 시작되는 연속 수집이 되고, 주기 값은 상한이 아니라 하한으로만 작동한다. 주기를 "튜닝"해 신선도를 올릴 수 있다고 생각하지 말 것 — 바닥은 KIS 응답 지연이다. 신선도를 정말 올리려면 유니버스를 줄이거나 종목당 GET 18회를 줄여야 한다.
 - `run_cycle()` 진입부에서 `should_collect(now)`가 False면 즉시 리턴한다. 한 줄 로그만 남기고 KIS 를 호출하지 않는다.
 
 게이트를 스케줄러가 아니라 `run_cycle()` 안에 두는 이유는, 수집기를 수동 스크립트로 호출하든 스케줄러가 호출하든 같은 규칙이 걸리게 하기 위함이다.

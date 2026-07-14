@@ -4,7 +4,14 @@ core 로직을 HTTP로 노출한다. 프론트 개발서버가 붙을 수 있게
 실 데이터 연동은 deps.PROVIDER 교체만으로 이뤄진다.
 
 수집기는 이 프로세스 안에서 백그라운드 스케줄러로 돈다(별도 워커·서비스 없음).
-라우트는 스냅샷 저장소만 읽으므로, 사용자가 몇 명이든 KIS 호출량은 그대로다.
+
+라우트는 두 부류다. 섞어 생각하면 호출량을 잘못 센다.
+- 스냅샷 읽기: /api/signal, /api/screener. 수집기가 채운 SQLite 를 읽으므로 사용자가 몇 명이든
+  KIS 호출은 0회다. 단, 해당 종목 스냅샷이 아직 없으면 그 요청만 즉석 수집한다(콜드 스타트).
+- KIS 실시간: /api/technical, /api/flow. 매 요청 KIS 를 직접 부른다. 열어 둔 대시보드가
+  60초마다 폴링하므로 화면 수 × 폴링 주기만큼 호출량이 는다 — "라우트는 스냅샷만 읽는다"가
+  아니다. 그래서 프론트가 장 마감 뒤에는 이 둘의 폴링을 끈다(hooks/useAutoRefresh 의 enabled).
+
 스케일아웃(인스턴스 2개 이상) 시점엔 인스턴스마다 스케줄러가 생겨 호출이 중복된다 —
 그때는 수집기를 떼어내고 Postgres 로 옮겨야 한다.
 """
@@ -65,7 +72,7 @@ def _safe_cycle() -> None:
 def _start_scheduler() -> None:
     global _scheduler
     _scheduler = BackgroundScheduler(daemon=True)
-    # 부팅 즉시 1회. lifespan 안에서 동기로 돌리면 200종목 × ~160초 동안 앱이 안 뜬다.
+    # 부팅 즉시 1회. lifespan 안에서 동기로 돌리면 200종목 × 실측 ~381초 동안 앱이 안 뜬다.
     _scheduler.add_job(_safe_cycle, "date",
                        run_date=datetime.datetime.now() + datetime.timedelta(seconds=1),
                        id="collect-now")
