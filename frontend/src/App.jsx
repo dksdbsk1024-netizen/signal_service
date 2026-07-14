@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Ds, WATCHLIST, NAME_BY_TICKER, TABS, Banner } from "./ui.jsx";
 import { DEFAULT_WEIGHTS, loadWeights, saveWeights } from "./weights.js";
 import OverviewTab from "./tabs/OverviewTab.jsx";
-import TechnicalTab from "./tabs/TechnicalTab.jsx";
-import FlowTab from "./tabs/FlowTab.jsx";
 import ScreenerTab from "./tabs/ScreenerTab.jsx";
 import MacroTab from "./tabs/MacroTab.jsx";
 
@@ -41,8 +39,6 @@ export default function App() {
   const renderTab = () => {
     switch (activeTab) {
       case "overview": return <OverviewTab ticker={ticker} weights={weights} />;
-      case "technical": return <TechnicalTab ticker={ticker} />;
-      case "flow": return <FlowTab ticker={ticker} />;
       case "macro": return <MacroTab />;
       case "screener": return <ScreenerTab onPick={(t) => { setTicker(t); setActiveTab("overview"); }} />;
       default: return <OverviewTab ticker={ticker} weights={weights} />;
@@ -63,7 +59,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* 탭 네비게이션 (5탭, 공유) */}
+      {/* 탭 네비게이션 (3탭, 공유) */}
       {TabNavigation && <TabNavigation tabs={TABS} activeId={activeTab} onChange={setActiveTab} />}
 
       {/* 설정 패널 (우측 슬라이드) */}
@@ -79,8 +75,8 @@ export default function App() {
         </ErrorBoundary>
       )}
 
-      {/* 탭 콘텐츠 */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "var(--space-8) var(--space-6) var(--space-16)" }}>
+      {/* 탭 콘텐츠 — 폭 제한 없음. 대시보드가 3열을 펼치려면 화면 폭을 다 써야 한다. */}
+      <div style={{ padding: "var(--space-6) var(--space-6) var(--space-16)" }}>
         <ErrorBoundary label={activeTab} resetKey={activeTab + ticker}>
           {renderTab()}
         </ErrorBoundary>

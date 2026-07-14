@@ -9,6 +9,8 @@ import "./design-system/_ds_bundle.js";
 // 소스를 다시 import 하면 올바른 바인딩으로 window.SettingsPanel/SettingsGearButton 을 재정의한다.
 import "./design-system/ui_kits/_shared/SettingsPanel.jsx";
 import "./design-system/styles.css";
+// DS 토큰 뒤에 와야 var(--space-*) 를 쓰고 규칙 충돌 시 우리 것이 이긴다.
+import "./layout.css";
 
 import React from "react";
 import { createRoot } from "react-dom/client";

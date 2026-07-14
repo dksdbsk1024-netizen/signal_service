@@ -28,13 +28,12 @@ export const WATCHLIST = [
 ];
 export const NAME_BY_TICKER = Object.fromEntries(WATCHLIST.map((s) => [s.ticker, s.name]));
 
-// 5개 탭 (설정은 탭 아님 — 우측 톱니). DESIGN.md §9 최신 구성.
-// 목록(시총상위)을 첫 진입으로 두고, 행을 누르면 종합 신호(탭)로 이동한다.
+// 3개 탭 (설정은 탭 아님 — 우측 톱니).
+// 기술적 분석·수급 탭은 없앴다 — 종합 신호 대시보드가 같은 화면에서 셋을 함께 보여 준다.
+// 탭을 오가며 같은 종목의 차트·수급을 맞춰 보던 동작이 원래 필요 없던 동작이었다.
 export const TABS = [
   { id: "screener", label: "종목 목록" },
   { id: "overview", label: "종합 신호" },
-  { id: "technical", label: "기술적 분석" },
-  { id: "flow", label: "수급" },
   { id: "macro", label: "매크로/시장" },
 ];
 

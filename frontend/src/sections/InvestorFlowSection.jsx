@@ -153,12 +153,10 @@ function BrokerTable({ brokers }) {
   );
 }
 
-// investorFlow 는 /api/flow 응답 전체를 통째로 넘기는 경로다(브리프 시그니처).
-// series/brokers 를 직접 주면 그쪽이 이긴다 — 현재 세 탭은 후자를 쓴다.
-export default function InvestorFlowSection({ investorFlow, series, brokers }) {
+// series/brokers 만 받는다. 응답 전체를 통째로 넘기던 investorFlow 경로는 지웠다 —
+// 아무도 넘기지 않았고 /api/flow 도 그런 필드를 주지 않는다(죽은 폴백이었다).
+export default function InvestorFlowSection({ series, brokers }) {
   const [mode, setMode] = useState("daily");
-  const s = series ?? investorFlow?.series;
-  const b = brokers ?? investorFlow?.brokers;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
@@ -170,17 +168,17 @@ export default function InvestorFlowSection({ investorFlow, series, brokers }) {
             <SegmentedControl items={NETBUY_MODES} activeId={mode} onChange={setMode} />
           </div>
         }>외국인·기관 순매수 추이</SectionLabel>
-        <NetBuyTrendChart data={s} mode={mode} height={200} />
+        <NetBuyTrendChart data={series} mode={mode} height={200} />
       </Card>
 
       <Card>
         <SectionLabel>프로그램 매매 동향</SectionLabel>
-        <ProgramTradingStrip net={s.program} />
+        <ProgramTradingStrip net={series.program} />
       </Card>
 
       <Card>
         <SectionLabel>거래원 상위</SectionLabel>
-        <BrokerTable brokers={b} />
+        <BrokerTable brokers={brokers} />
       </Card>
     </div>
   );

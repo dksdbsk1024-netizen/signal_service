@@ -1,6 +1,11 @@
 // 매매 계획 섹션 — 입력(진입가·계좌·리스크) + 손절/목표 + 포지션 사이징.
 // 입력 상태는 부모가 든다: 이 값들이 /api/signal fetch 의 의존성이라 섹션이 들면
 // 섹션이 fetch 를 알아야 한다. 섹션은 값과 콜백만 받는다.
+//
+// 레이아웃: 세로 스택 한 가지만 둔다. 예전 `320px 1fr` 2단 그리드는 폭 1100px 짜리
+// 탭 시절의 것인데, 지금 유일한 호출자는 ~360px 대시보드 열이라 2단이면 입력칸이 뭉갠다.
+// layout prop 을 두는 대신 없앤 이유: 호출자가 하나뿐이라 값이 하나뿐인 스위치는
+// 죽은 설정이다. 넓은 곳에 다시 쓰이면 그때 되살리면 된다.
 import React from "react";
 import { fmtWon, Card, SectionLabel, FieldLabel, NumberField, Banner } from "../ui.jsx";
 
@@ -13,7 +18,8 @@ function TradePlanView({ plan }) {
         <SectionLabel right={<span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>ATR(14) <span className="ds-numeric" style={{ color: "var(--text-secondary)" }}>{fmtWon(plan.atr)}</span></span>}>
           손절가 · 목표가 (ATR 기반)
         </SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--space-3)" }}>
+        {/* 손절 1 + 목표 N 을 auto-fit 로 흘린다 — 좁은 열에선 2줄, 넓어지면 한 줄. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "var(--space-3)" }}>
           <div style={{ background: "var(--signal-sell-bg)", border: "1px solid var(--signal-sell-border)", borderRadius: "var(--radius-sm)", padding: "var(--space-3)" }}>
             <div style={{ fontSize: "var(--text-2xs)", color: "var(--signal-sell)", fontWeight: 700 }}>손절가 (1×ATR)</div>
             <div className="ds-numeric" style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--signal-sell)", marginTop: 4 }}>{fmtWon(plan.stop)}</div>
@@ -59,7 +65,7 @@ export default function TradePlanSection({
 }) {
   const plan = tradePlan;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
       <Card style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <SectionLabel>입력 (변경 시 서버 재계산)</SectionLabel>
         <div>
