@@ -27,6 +27,7 @@ export default function useAutoRefresh(fetcher, deps, options = {}) {
 
   // 진행 중인 요청. 새 요청이 뜨면 이전 것을 끊는다(늦게 온 응답이 최신을 덮지 않게).
   const ctrlRef = useRef(null);
+  // deps 는 원시값이나 평범한 JSON 객체만 넣을 것 — 순환 참조·BigInt 는 렌더 중에 던진다.
   const depsKey = JSON.stringify(deps);
 
   const run = useCallback(async () => {
@@ -42,6 +43,10 @@ export default function useAutoRefresh(fetcher, deps, options = {}) {
       setError(null);
       setFetchedAt(new Date());
     } catch (e) {
+      // 끊긴 요청의 실패는 말하지 않는다. AbortError 만 걸러선 모자라다 — fetcher 가
+      // `if (!res.ok) throw new Error(...)` 로 던지면 이름이 AbortError 가 아니라서,
+      // 종목을 바꾼 뒤 늦게 실패한 이전 종목의 에러가 새 종목 화면에 배너로 뜬다.
+      if (ctrl.signal.aborted) return;
       if (e.name === "AbortError") return;
       setError(e.message || "요청 실패");
     } finally {
