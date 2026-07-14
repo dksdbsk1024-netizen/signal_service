@@ -48,6 +48,14 @@ export default function OverviewTab({ ticker, weights }) {
     { debounceMs: 300 },   // 슬라이더를 끌 때마다 쏘지 않는다
   );
 
+  // /api/technical·/api/flow 는 스냅샷이 아니라 매 요청 KIS 를 실시간으로 부른다.
+  // 장이 닫힌 밤·주말에 60초 폴링을 계속하면, 수집기 게이트(market_hours.should_collect)로
+  // 막아 둔 장외 KIS 호출을 열어둔 대시보드가 그대로 도로 연다 — 시세는 변하지도 않는데.
+  // /api/signal 은 스냅샷 읽기(KIS 0회)라 계속 폴링한다. 장이 열리면 이 응답의
+  // market_status 가 바뀌면서 아래 두 폴링을 다시 켜 준다 — 새로고침이 필요 없다.
+  const marketStatus = sig.data?.header?.market_status;
+  const marketLive = marketStatus === "open" || marketStatus === "after";
+
   const tech = useAutoRefresh(
     async (signal) => {
       const res = await fetch(`${API}/api/technical/${ticker}?interval=${interval}&bars=120`, { signal });
@@ -55,6 +63,7 @@ export default function OverviewTab({ ticker, weights }) {
       return res.json();
     },
     [ticker, interval],
+    { enabled: marketLive },
   );
 
   const flow = useAutoRefresh(
@@ -64,6 +73,7 @@ export default function OverviewTab({ ticker, weights }) {
       return res.json();
     },
     [ticker],
+    { enabled: marketLive },
   );
 
   const name = NAME_BY_TICKER[ticker] || ticker;
