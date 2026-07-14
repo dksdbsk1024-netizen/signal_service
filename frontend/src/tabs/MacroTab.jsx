@@ -101,6 +101,13 @@ const CAT_META = {
 };
 const flagOf = (c) => (c === "US" ? "🇺🇸" : c === "KR" ? "🇰🇷" : "🌐");
 
+// OverviewTab 의 ColumnGate 와 같은 패턴 — 세 하위 응답을 하나로 묶어 폴링하므로
+// 섹션별 useAutoRefresh 상태는 없지만, 데이터 유무만으로 죽은 섹션 하나만 게이트한다.
+function SectionGate({ ok, label, children }) {
+  if (ok) return children;
+  return <Banner tone="error">{label} 불러오기 실패 — 다른 섹션은 정상입니다.</Banner>;
+}
+
 // 중요도 점: high=채운 골드, medium=채운 회색, low=빈 원.
 function ImportanceDot({ level }) {
   const map = { high: "var(--accent-strong)", medium: "var(--text-tertiary)", low: "transparent" };
@@ -143,8 +150,9 @@ export default function MacroTab() {
   const [region, setRegion] = useState("all");
 
   // 매크로 지표는 분 단위로 안 변한다 — 종합신호(60초)보다 느슨한 300초 주기.
-  // 세 엔드포인트를 하나로 묶는다: 셋 다 어차피 한 화면에서 같이 쓰이므로 상태를 셋
-  // 따로 들 이유가 없다(그리고 실패해도 직전 값 전체를 유지하는 규칙이 하나로 통일된다).
+  // 세 엔드포인트를 폴링 훅 하나로 묶되(타이머·재시도 코드 중복 방지), 응답 자체는
+  // allSettled 로 따로 다룬다 — 셋이 한 화면에 같이 쓰인다고 실패까지 하나로 뭉쳐서
+  // 하나 죽었다고 나머지 둘까지 에러 배너로 덮으면 안 된다(아래 SectionGate 참고).
   const { data, error, loading, isRefreshing, fetchedAt, refresh } = useAutoRefresh(
     async (signal) => {
       const grab = async (path) => {
@@ -152,9 +160,19 @@ export default function MacroTab() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       };
-      const [base, indicators, quotes] = await Promise.all([
+      // Task4 이전엔 세 응답이 독립이었다 — 하나가 죽어도 나머지 둘은 그려졌다.
+      // Promise.all 로 묶으면 하나만 실패해도 data 자체가 안 잡혀 화면 전체가 에러
+      // 배너로 덮인다. allSettled 로 개별 실패를 null 로 흡수하고, 셋 다 죽었을
+      // 때만 던져서 첫 로드 전체 실패를 배너로 알린다(그 외엔 섹션별로 게이트).
+      const [baseR, indR, quotesR] = await Promise.allSettled([
         grab("/base"), grab("/indicators"), grab("/quotes"),
       ]);
+      const base = baseR.status === "fulfilled" ? baseR.value : null;
+      const indicators = indR.status === "fulfilled" ? indR.value : null;
+      const quotes = quotesR.status === "fulfilled" ? quotesR.value : null;
+      if (base == null && indicators == null && quotes == null) {
+        throw new Error(baseR.reason?.message || indR.reason?.message || quotesR.reason?.message || "요청 실패");
+      }
       return { base, indicators, quotes };
     },
     [],
@@ -206,12 +224,16 @@ export default function MacroTab() {
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
           {sourceBadge}
           <SegmentedControl items={REGION_FILTERS} activeId={region} onChange={setRegion} />
-          <RefreshLine asOf={quotesAsOf} fetchedAt={fetchedAt} isRefreshing={isRefreshing} error={error} onRefresh={refresh} />
+          {/* /api/macro/indicators 엔 섹션 자체의 as_of 가 없다. quotesAsOf(시세 갱신 시각)를 여기
+              쓰면 며칠 묵은 지표 옆에 "방금" 이 찍히는 거짓 신선도가 된다 — fetchedAt 으로 정직하게. */}
+          <RefreshLine fetchedAt={fetchedAt} isRefreshing={isRefreshing} error={error} onRefresh={refresh} />
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
-        {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
-      </div>
+      <SectionGate ok={!!indData} label="경제지표">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-4)" }}>
+          {indicators.map((ind) => <EconCard key={`${ind.region}-${ind.name}`} ind={ind} />)}
+        </div>
+      </SectionGate>
 
       {/* 발표 캘린더 — 확정 상수 + 규칙 추정, 오늘 기준 D-day */}
       <Card style={{ padding: "var(--space-4) var(--space-5)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -220,36 +242,44 @@ export default function MacroTab() {
           <span style={{ fontSize: "9px", color: "var(--text-tertiary)" }}>확정 FOMC/동시만기 · 그 외 추정(공식 일정 확인 권장)</span>
         </div>
 
-        {/* 카운트다운 — 다음 FOMC · CPI · 금통위 */}
-        {highlights.length > 0 && (
-          <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            {highlights.map((h) => <CountdownCard key={h.label} label={h.label} ev={h.ev} />)}
-          </div>
-        )}
+        <SectionGate ok={!!base} label="발표 캘린더">
+          {/* 카운트다운 — 다음 FOMC · CPI · 금통위 */}
+          {highlights.length > 0 && (
+            <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
+              {highlights.map((h) => <CountdownCard key={h.label} label={h.label} ev={h.ev} />)}
+            </div>
+          )}
 
-        {/* 날짜순 리스트 — 지난 이벤트 흐리게, 임박 강조 */}
-        <div>
-          {calList.length === 0
-            ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
-            : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
-        </div>
+          {/* 날짜순 리스트 — 지난 이벤트 흐리게, 임박 강조 */}
+          <div>
+            {calList.length === 0
+              ? <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>표시할 발표 없음</span>
+              : calList.map((e) => <CalRow key={`${e.date}-${e.name}`} ev={e} />)}
+          </div>
+        </SectionGate>
       </Card>
 
       {/* 섹션 B · 시세 (yfinance 실데이터, 실시간 시세) */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)" }}>
         <SectionEyebrow index="B" title="시세 — 보조 지표" />
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-          {q.source === "yfinance"
-            ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
-            : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
-          {quotesAsOf && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {quotesAsOf}</span>}
-        </div>
+        {q && (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            {q.source === "yfinance"
+              ? <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--status-live)", border: "1px solid var(--status-live)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>실데이터 · yfinance</span>
+              : <span style={{ fontSize: "var(--text-2xs)", fontWeight: 700, color: "var(--accent-strong)", border: "1px solid var(--accent-strong)", borderRadius: "var(--radius-pill)", padding: "2px 10px" }}>Mock</span>}
+            {quotesAsOf && <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>기준 {quotesAsOf}</span>}
+          </div>
+        )}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
-        {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
-        <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
-        <QuoteCard q={q.volatility} />
-      </div>
+      <SectionGate ok={!!q} label="시세">
+        {q && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "var(--space-3)" }}>
+            {q.indices.map((idx) => <QuoteCard key={idx.name} q={idx} />)}
+            <QuoteCard q={{ ...q.fx, name: q.fx.pair }} />
+            <QuoteCard q={q.volatility} />
+          </div>
+        )}
+      </SectionGate>
     </div>
   );
 }
