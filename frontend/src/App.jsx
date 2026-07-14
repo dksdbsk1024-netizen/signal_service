@@ -27,8 +27,9 @@ export default function App() {
   const [ticker, setTicker] = useState("005930");
   const [activeTab, setActiveTab] = useState("screener");
   const [showSettings, setShowSettings] = useState(false);
-  // 스코어 가중치. 설정 패널이 고치고 탭1이 API 에 실어 보낸다.
-  // 객체 정체성이 곧 OverviewTab 의 refetch 트리거다 — setWeights 로만 새로 만든다.
+  // 스코어 가중치. 설정 패널이 고치고 종합신호 탭이 API 에 실어 보낸다.
+  // useAutoRefresh 는 의존성을 JSON 직렬화해 비교한다 — 값이 같으면 객체를 새로 만들어도
+  // 재요청하지 않는다(정체성이 아니라 내용이 트리거다).
   const [weights, setWeights] = useState(loadWeights);
 
   useEffect(() => { saveWeights(weights); }, [weights]);
