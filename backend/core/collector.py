@@ -29,9 +29,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 
-from ..api.deps import load_indicators, market_status, stock_header
+from ..api.deps import load_indicators, stock_header
 from . import scoring
 from .kis import COLLECT_WORKERS, KISAuthError
+from .market_hours import should_collect
 from .snapshot_store import SnapshotStore, get_store
 
 log = logging.getLogger(__name__)
@@ -41,8 +42,8 @@ UNIVERSE_FILE = Path(__file__).resolve().parents[1] / "data" / "universe_top200.
 # 종목당 GET 최대 18회(분봉 최대 12페이지 + 수급 4 + 현재가 2). 실측(2026-07-10, 워커 24):
 # 200종목 1사이클 381초, GET 2,574회, 6.8 req/s. 유량 상한(12/s)이 아니라 KIS 응답 지연이 바닥이다.
 # 사이클이 주기보다 길면 max_instances=1 이 그냥 건너뛴다 — 호출량이 두 배가 되진 않고,
-# 사실상 '끝나는 대로 다시' 가 된다.
-COLLECT_INTERVAL_SEC = int(os.getenv("COLLECT_INTERVAL_SEC", "300"))
+# 사실상 '끝나는 대로 다시' 가 된다. 그래서 주기를 낮추는 건 상한이 아니라 하한을 당기는 셈이다.
+COLLECT_INTERVAL_SEC = int(os.getenv("COLLECT_INTERVAL_SEC", "180"))
 
 _KST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -106,9 +107,17 @@ def run_cycle(universe: list[dict] | None = None,
               store: SnapshotStore | None = None) -> dict:
     """유니버스 한 바퀴. 종목 실패는 넘어가고, 인증 실패는 사이클을 중단한다.
 
+    장 밖(should_collect() False)이면 아무것도 하지 않는다. 게이트를 스케줄러가 아니라
+    여기 두는 이유는, 수동 실행(python -m backend.core.collector)에도 같은 규칙을 걸기
+    위함이다. 시세가 안 변하는 밤·주말에 KIS 를 두드릴 이유가 없다.
+
     실패한 종목의 이전 스냅샷은 건드리지 않는다(stale-while-revalidate).
     인증이 거부되면 남은 종목도 전부 같은 이유로 실패할 테니 헛돌지 않고 즉시 올린다.
     """
+    if not should_collect():
+        log.info("장 밖 — 수집 사이클 건너뜀")
+        return {"ok": 0, "failed": [], "elapsed_sec": 0.0, "skipped": True}
+
     universe = universe if universe is not None else load_universe()
     store = store or get_store()
 
@@ -138,7 +147,7 @@ def run_cycle(universe: list[dict] | None = None,
 
     elapsed = time.monotonic() - started
     log.info("사이클 완료: %d종목 성공, %d종목 실패, %.1f초", ok, len(failed), elapsed)
-    return {"ok": ok, "failed": failed, "elapsed_sec": round(elapsed, 1)}
+    return {"ok": ok, "failed": failed, "elapsed_sec": round(elapsed, 1), "skipped": False}
 
 
 def _main() -> int:
@@ -156,10 +165,13 @@ def _main() -> int:
 
     while True:
         result = run_cycle(universe)
-        print(f"{result['ok']}종목 성공 / {len(result['failed'])}종목 실패 "
-              f"/ {result['elapsed_sec']}초")
-        for ticker, err in result["failed"]:
-            print(f"  실패 {ticker}: {err}")
+        if result["skipped"]:
+            print("장 밖 — 수집 건너뜀")
+        else:
+            print(f"{result['ok']}종목 성공 / {len(result['failed'])}종목 실패 "
+                  f"/ {result['elapsed_sec']}초")
+            for ticker, err in result["failed"]:
+                print(f"  실패 {ticker}: {err}")
         if not args.loop:
             return 0 if not result["failed"] else 1
         time.sleep(args.interval)

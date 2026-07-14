@@ -6,6 +6,7 @@ MockProvider 는 티커별 시드로 결정론적이라 같은 종목은 늘 같
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -180,3 +181,37 @@ def test_run_cycle_defaults_to_the_static_universe(store, monkeypatch):
     collector.run_cycle(store=store)
 
     assert len(seen) == 200
+
+
+def test_run_cycle_skips_outside_market_hours(monkeypatch):
+    """장 밖이면 KIS 를 한 번도 부르지 않고 즉시 리턴한다."""
+    from backend.core import collector
+
+    called = []
+
+    def _boom(*args, **kwargs):
+        called.append(args)
+        raise AssertionError("장 밖인데 수집을 시도했다")
+
+    monkeypatch.setattr(collector, "collect_ticker", _boom)
+    monkeypatch.setattr(collector, "should_collect", lambda: False)
+
+    result = collector.run_cycle(universe=[{"ticker": "005930", "name": "삼성전자"}])
+
+    assert result["skipped"] is True
+    assert result["ok"] == 0
+    assert called == []
+
+
+def test_run_cycle_runs_inside_market_hours(monkeypatch):
+    """장중이면 평소대로 돈다."""
+    from backend.core import collector
+
+    monkeypatch.setattr(collector, "collect_ticker",
+                        lambda ticker, name, store=None, tier=0: {"ticker": ticker})
+    monkeypatch.setattr(collector, "should_collect", lambda: True)
+
+    result = collector.run_cycle(universe=[{"ticker": "005930", "name": "삼성전자"}])
+
+    assert result["skipped"] is False
+    assert result["ok"] == 1
