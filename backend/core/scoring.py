@@ -101,42 +101,62 @@ def score_atr_band(pos: float) -> float:
 
 
 # ── 카테고리 집계 ──────────────────────────────────────────────
-def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float, dict]]:
-    """카테고리별 (점수, 세부 지표 점수 dict). 세부는 UI 드릴다운·검증용."""
-    vwap_gap = ind.trend.get("price_vs_vwap", 0.0)
-    direction_sign = 0.0 if vwap_gap == 0 else math.copysign(1.0, vwap_gap)
+# 봉 부족으로 못 구한 지표는 IndicatorSet 에서 None 으로 온다. 여기서 0 이나 중립값으로
+# 치환하면 안 된다 — RSI 결측을 50(중립)으로 치면 "모멘텀 중립"이라는 없는 관측을
+# 만들어내고, 0 으로 치면 -100점(극단 과매도)이 된다. 없는 지표는 빼고 평균한다.
+def _optional(fn, *args) -> float | None:
+    """인자에 None 이 하나라도 있으면 점수도 None. 아니면 fn 을 태운다."""
+    return None if any(a is None for a in args) else fn(*args)
+
+
+def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float | None, dict]]:
+    """카테고리별 (점수, 세부 지표 점수 dict). 세부는 UI 드릴다운·검증용.
+
+    세부 지표 점수가 None 이면 그 지표는 평균에서 빠진다. 한 카테고리의 지표가
+    전부 None 이면 카테고리 점수도 None — 그 카테고리는 최종 스코어에서 통째로 빠지고
+    가중치는 나머지 카테고리로 재분배된다(score_stock).
+    """
+    vwap_gap = ind.trend.get("price_vs_vwap")
+    if vwap_gap is None:
+        direction_sign = None  # 방향을 모르면 거래량 급증의 부호도 못 정한다
+    else:
+        direction_sign = 0.0 if vwap_gap == 0 else math.copysign(1.0, vwap_gap)
 
     trend_detail = {
-        "ma_alignment": score_ma_alignment(ind.trend.get("ma_alignment", 0.0)),
-        "price_vs_vwap": score_price_vs_vwap(vwap_gap),
+        "ma_alignment": _optional(score_ma_alignment, ind.trend.get("ma_alignment")),
+        "price_vs_vwap": _optional(score_price_vs_vwap, vwap_gap),
     }
     momentum_detail = {
-        "rsi": score_rsi(ind.momentum.get("rsi", 50.0)),
-        "macd_hist": score_macd_hist(ind.momentum.get("macd_hist", 0.0), ind.last_close),
-        "stoch": score_stoch(ind.momentum.get("stoch_k", 50.0)),
+        "rsi": _optional(score_rsi, ind.momentum.get("rsi")),
+        "macd_hist": _optional(score_macd_hist, ind.momentum.get("macd_hist"), ind.last_close),
+        "stoch": _optional(score_stoch, ind.momentum.get("stoch_k")),
     }
     volume_detail = {
-        "surge": score_volume(ind.volume.get("surge", 1.0), direction_sign),
+        "surge": _optional(score_volume, ind.volume.get("surge"), direction_sign),
     }
     volatility_detail = {
-        "pct_b": score_pct_b(ind.volatility.get("pct_b", 0.5)),
-        "atr_band": score_atr_band(ind.volatility.get("atr_band", 0.5)),
+        "pct_b": _optional(score_pct_b, ind.volatility.get("pct_b")),
+        "atr_band": _optional(score_atr_band, ind.volatility.get("atr_band")),
     }
     flow_detail = {
-        "smart_money": score_flow(
-            ind.flow.get("smart_money_ratio", 0.0), ind.flow.get("program_ratio", 0.0)
+        "smart_money": _optional(
+            score_flow, ind.flow.get("smart_money_ratio"), ind.flow.get("program_ratio")
         ),
-        "obv": score_obv(ind.flow.get("obv", 0.0)),
+        "obv": _optional(score_obv, ind.flow.get("obv")),
     }
 
-    def weighted(detail: dict, cat: str) -> float:
-        """세부지표 점수를 config.INDICATOR_WEIGHTS로 가중평균(카테고리 내 합=1 재정규화).
+    def weighted(detail: dict, cat: str) -> float | None:
+        """세부지표 점수를 config.INDICATOR_WEIGHTS로 가중평균(가용 지표 내 합=1 재정규화).
 
-        가중치 미지정 지표는 1.0. 전부 1.0이면 단순평균과 동일.
+        None 인 지표는 분자·분모 양쪽에서 빠진다 — 남은 지표들만의 가중평균이 된다.
+        전부 None 이면 카테고리 점수도 None.
         """
+        usable = {k: v for k, v in detail.items() if v is not None}
+        if not usable:
+            return None
         w = config.INDICATOR_WEIGHTS.get(cat, {})
-        total_w = sum(w.get(k, 1.0) for k in detail) or 1.0
-        return clamp(sum(detail[k] * w.get(k, 1.0) for k in detail) / total_w)
+        total_w = sum(w.get(k, 1.0) for k in usable) or 1.0
+        return clamp(sum(usable[k] * w.get(k, 1.0) for k in usable) / total_w)
 
     return {
         "trend": (weighted(trend_detail, "trend"), trend_detail),
@@ -145,6 +165,20 @@ def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float, dict]]:
         "volatility": (weighted(volatility_detail, "volatility"), volatility_detail),
         "flow": (weighted(flow_detail, "flow"), flow_detail),
     }
+
+
+def _category_coverage(cat: str, detail: dict) -> float:
+    """카테고리 안에서 실제로 쓰인 지표 가중치의 비율 (0~1).
+
+    카테고리 단위로만 세면 신뢰도가 과장된다: 추세는 VWAP(첫 봉부터) + 이평배열(60봉)
+    인데, 봉 21개면 VWAP 하나로 "추세 100% 반영"이라고 말하게 된다. 지표 단위로 센다.
+    """
+    w = config.INDICATOR_WEIGHTS.get(cat, {})
+    total = sum(w.get(k, 1.0) for k in detail)
+    if not total:
+        return 0.0
+    usable = sum(w.get(k, 1.0) for k, v in detail.items() if v is not None)
+    return usable / total
 
 
 # ── 결과 타입 ──────────────────────────────────────────────────
@@ -162,9 +196,14 @@ class ContributionEntry:
 
 @dataclass
 class SignalResult:
-    final_score: float
-    label: str
+    final_score: float | None
+    label: str | None
     contributions: list[ContributionEntry]
+    # 가용 카테고리 가중치 / 요청 가중치 합. 1.0 = 전 지표 사용, 0.4 = 40% 만 사용.
+    # 워밍업 중에는 1.0 미만이 정상이다 — UI 가 "신뢰도" 로 표시한다.
+    coverage: float = 1.0
+    # 봉 부족으로 빠진 카테고리(영문 키). UI 가 "무엇이 빠졌는지" 를 말할 근거.
+    unavailable: list[str] = field(default_factory=list)
 
 
 def label_for(score: float) -> str:
@@ -182,17 +221,38 @@ def score_stock(
     """지표 묶음 → 최종 스코어·라벨·기여도 분해.
 
     가중치 합이 100이 아니어도 정규화해 최종 스코어를 [-100,100]로 유지한다.
+
+    봉 부족으로 점수를 못 내는 카테고리는 통째로 빠지고, 그 가중치는 남은
+    카테고리로 재분배된다(분모에서 제외). "빠진 카테고리 = 0점" 으로 치면 신호가
+    중립 쪽으로 끌려가 왜곡되므로 그렇게 하지 않는다.
+
+    가용 카테고리가 하나도 없으면 final_score·label 은 None 이다 — 0.0/"중립"이
+    아니다. 스코어를 못 내는 것과 "중립"은 다른 말이다.
     """
     weights = weights or config.DEFAULT_WEIGHTS
-    total_w = sum(weights.get(c, 0) for c in config.CATEGORIES) or 1.0
+    requested_w = sum(weights.get(c, 0) for c in config.CATEGORIES)
     cats = _category_scores(ind)
+
+    available = [c for c in config.CATEGORIES if cats[c][0] is not None]
+    unavailable = [c for c in config.CATEGORIES if cats[c][0] is None]
+    # 재정규화 분모: 가용 카테고리의 가중치만 더한다.
+    usable_w = sum(weights.get(c, 0) for c in available)
+
+    if not available or usable_w <= 0:
+        return SignalResult(
+            final_score=None,
+            label=None,
+            contributions=[],
+            coverage=0.0,
+            unavailable=unavailable,
+        )
 
     contributions: list[ContributionEntry] = []
     final = 0.0
-    for cat in config.CATEGORIES:
+    for cat in available:
         score, detail = cats[cat]
         w = weights.get(cat, 0)
-        contribution = score * w / total_w  # 정규화된 기여분
+        contribution = score * w / usable_w  # 가용 가중치 기준 재정규화
         final += contribution
         contributions.append(
             ContributionEntry(
@@ -201,14 +261,28 @@ def score_stock(
                 score=round(score, 1),
                 weight=w,
                 contribution=round(contribution, 1),
-                detail={k: round(v, 1) for k, v in detail.items()},
+                # 세부에서도 None 인 지표는 뺀다 — UI 드릴다운이 "0점"을 보면 안 된다.
+                detail={k: round(v, 1) for k, v in detail.items() if v is not None},
             )
         )
 
     final = round(clamp(final), 1)
     # 기여 절대값 큰 순으로 정렬 (UI 상위 4~5개 노출)
     contributions.sort(key=lambda c: abs(c.contribution), reverse=True)
-    return SignalResult(final_score=final, label=label_for(final), contributions=contributions)
+
+    # 신뢰도 = 카테고리 가중치 × 그 카테고리 안에서 실제로 쓰인 지표 비율, 의 합.
+    # 빠진 카테고리는 0 으로 들어간다. 전 지표가 데워져야 1.0 이 된다.
+    covered = sum(
+        weights.get(cat, 0) * _category_coverage(cat, cats[cat][1])
+        for cat in config.CATEGORIES
+    )
+    return SignalResult(
+        final_score=final,
+        label=label_for(final),
+        contributions=contributions,
+        coverage=round(covered / requested_w, 3) if requested_w else 0.0,
+        unavailable=unavailable,
+    )
 
 
 # ── 리스크 계산 (탭1 매매계획) ──────────────────────────────────

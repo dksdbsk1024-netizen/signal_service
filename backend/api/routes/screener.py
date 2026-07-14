@@ -30,15 +30,23 @@ def _cold_limit() -> int:
 
 
 def _row(snapshot: dict) -> dict:
-    """스냅샷 1행 → 스크리너 표 1행. 응답 스키마는 전환 전과 동일하다."""
+    """스냅샷 1행 → 스크리너 표 1행.
+
+    장 시작 직후엔 가용 지표가 하나도 없어 기여도가 빈 리스트일 수 있다 —
+    그때 final_score·label 도 None 이다. 0점/"중립"으로 채우지 않는다.
+    """
     contributions = json.loads(snapshot["contributions_json"])
-    top = contributions[0]  # score_stock 이 기여 절대값 내림차순으로 정렬해 둔다
+    # score_stock 이 기여 절대값 내림차순으로 정렬해 둔다 → 0번이 곧 1위.
+    top = contributions[0] if contributions else None
     return {
         "ticker": snapshot["ticker"],
         "name": snapshot["name"],
         "final_score": snapshot["final_score"],
         "label": snapshot["label"],
-        "top_contributor": {"name": top["name"], "contribution": top["contribution"]},
+        "coverage": snapshot["coverage"],
+        "top_contributor": (
+            {"name": top["name"], "contribution": top["contribution"]} if top else None
+        ),
         # 목록 표 컬럼용 시세 (탭1 헤더와 동일 소스)
         "price": snapshot["price"],
         "change": snapshot["change"],

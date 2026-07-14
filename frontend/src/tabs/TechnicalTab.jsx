@@ -134,8 +134,14 @@ export default function TechnicalTab({ ticker }) {
   }, [ticker, interval]);
 
   const name = NAME_BY_TICKER[ticker] || ticker;
+  // 봉 부족 지표는 value=null 로 온다. String(null) 은 화면에 "null" 을 찍는다 —
+  // 왜 없는지(봉 N/M)를 값 자리에 그대로 쓴다.
   const tableRows = useMemo(
-    () => (data?.indicators_table || []).map((r) => ({ name: r.name, value: String(r.value), signal: toSignalEnum(r.signal) })),
+    () => (data?.indicators_table || []).map((r) => ({
+      name: r.name,
+      value: r.value == null ? `봉 ${r.bars}/${r.required_bars}` : String(r.value),
+      signal: toSignalEnum(r.signal),
+    })),
     [data]
   );
 

@@ -111,11 +111,18 @@ export function ToggleChip({ label, active, color, onClick }) {
     </button>
   );
 }
+// tone: error(빨강) | warn(노랑 — 데이터 부족·신뢰도 낮음) | 기본(회색)
 export function Banner({ tone, children }) {
-  const color = tone === "error" ? "var(--signal-sell)" : "var(--text-secondary)";
-  return <div style={{ padding: "var(--space-4)", textAlign: "center", fontSize: "var(--text-sm)", color, border: "1px dashed var(--border-default)", borderRadius: "var(--radius-md)" }}>{children}</div>;
+  const color =
+    tone === "error" ? "var(--signal-sell)" :
+    tone === "warn" ? "var(--accent)" : "var(--text-secondary)";
+  return <div style={{ padding: "var(--space-4)", textAlign: "center", fontSize: "var(--text-sm)", color, border: `1px dashed ${tone ? color : "var(--border-default)"}`, borderRadius: "var(--radius-md)" }}>{children}</div>;
 }
 export function LabelBadge({ label }) {
+  // 스코어를 못 낸 종목은 label 이 null 이다. 빈 배지를 그리느니 이유를 쓴다.
+  if (!label) {
+    return <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>산출 불가</span>;
+  }
   const color =
     label === "적극매수" ? "var(--signal-buy-strong)" :
     label === "매수" ? "var(--signal-buy)" :
@@ -154,5 +161,7 @@ export function AsOfBadge({ children, mock, stale }) {
 export function toSignalEnum(korean) {
   if (korean === "매수") return "buy";
   if (korean === "매도") return "sell";
+  // 봉 부족은 "중립"이 아니다 — 계산이 안 됐다는 뜻이다. 칩을 따로 쓴다.
+  if (korean === "봉 부족") return "unknown";
   return "neutral";
 }

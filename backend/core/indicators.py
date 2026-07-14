@@ -21,19 +21,21 @@ def sma(close: pd.Series, period: int) -> pd.Series:
     return close.rolling(window=period, min_periods=period).mean()
 
 
-def ma_alignment(close: pd.Series, periods: list[int] | None = None) -> float:
+def ma_alignment(close: pd.Series, periods: list[int] | None = None) -> float | None:
     """이동평균 배열 상태를 -1.0~+1.0으로. 정배열(단기>장기)=+, 역배열=-.
 
     인접 이평 쌍(5>20, 20>60 ...)의 대소를 세어 정규화한다.
     +1.0 = 완전 정배열, -1.0 = 완전 역배열, 0 = 혼조.
+
+    가장 긴 이평(기본 60)이 안 채워졌으면 None — 0.0(혼조)이 아니다.
     """
     periods = periods or config.MA_PERIODS
     mas = [sma(close, p).iloc[-1] for p in periods]
     if any(pd.isna(m) for m in mas):
-        return 0.0
+        return None
     pairs = len(mas) - 1
     if pairs <= 0:
-        return 0.0
+        return None
     ups = sum(1 for i in range(pairs) if mas[i] > mas[i + 1])
     downs = sum(1 for i in range(pairs) if mas[i] < mas[i + 1])
     return (ups - downs) / pairs
@@ -47,12 +49,16 @@ def vwap(df: pd.DataFrame) -> pd.Series:
     return cum_pv / cum_vol.replace(0, np.nan)
 
 
-def price_vs_vwap(df: pd.DataFrame) -> float:
-    """현재가의 VWAP 대비 괴리율(%). +면 VWAP 위(매수 우위)."""
+def price_vs_vwap(df: pd.DataFrame) -> float | None:
+    """현재가의 VWAP 대비 괴리율(%). +면 VWAP 위(매수 우위).
+
+    VWAP 은 누적이라 첫 봉부터 나온다 — 워밍업이 사실상 없는 유일한 추세 지표다.
+    거래량이 0이면(거래 없는 봉만 있음) VWAP 이 정의되지 않아 None.
+    """
     vw = vwap(df).iloc[-1]
     price = df["close"].iloc[-1]
     if pd.isna(vw) or vw == 0:
-        return 0.0
+        return None
     return float((price - vw) / vw * 100)
 
 
@@ -78,12 +84,23 @@ def macd(
     slow: int = config.MACD_SLOW,
     signal: int = config.MACD_SIGNAL,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """MACD → (macd_line, signal_line, histogram)."""
+    """MACD → (macd_line, signal_line, histogram).
+
+    adjust=False 인 EWM 은 첫 봉부터 숫자를 뱉는다 — 봉 3개짜리 "MACD" 도 값이
+    나온다는 뜻이고, 그 값은 느린 EMA 가 안 데워져서 의미가 없다. 워밍업 구간을
+    명시적으로 NaN 처리해 안 데워진 값이 신호로 새 나가지 않게 한다.
+    """
     ema_fast = close.ewm(span=fast, adjust=False).mean()
     ema_slow = close.ewm(span=slow, adjust=False).mean()
     macd_line = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     hist = macd_line - signal_line
+
+    # 첫 유효 봉 = (slow + signal - 1) 번째 → 인덱스로는 그 앞까지 지운다.
+    # config.INDICATOR_MIN_BARS["macd_hist"] 와 같은 수가 나와야 한다.
+    first_valid = min(slow + signal - 2, len(close))
+    for series in (macd_line, signal_line, hist):
+        series.iloc[:first_valid] = np.nan
     return macd_line, signal_line, hist
 
 
@@ -106,13 +123,17 @@ def stochastic(
 
 
 # ── 거래량 ─────────────────────────────────────────────────────
-def volume_surge(volume: pd.Series, lookback: int = config.VOL_LOOKBACK) -> float:
-    """최근 거래량 / 직전 lookback 평균. 1.0=평균, 2.0=평균의 2배(급증)."""
+def volume_surge(volume: pd.Series, lookback: int = config.VOL_LOOKBACK) -> float | None:
+    """최근 거래량 / 직전 lookback 평균. 1.0=평균, 2.0=평균의 2배(급증).
+
+    비교할 직전 구간이 없으면 None — 1.0("평균 수준")이 아니다. 장 시작 3분에
+    터진 거래량을 "평범함"으로 보고하면 급등 초입을 통째로 놓친다.
+    """
     if len(volume) < lookback + 1:
-        return 1.0
+        return None
     baseline = volume.iloc[-(lookback + 1):-1].mean()
     if baseline == 0 or pd.isna(baseline):
-        return 1.0
+        return None  # 직전 구간 거래량 0 → 배수가 정의되지 않는다
     return float(volume.iloc[-1] / baseline)
 
 
@@ -124,20 +145,23 @@ def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
 
 def obv_divergence(
     close: pd.Series, volume: pd.Series, lookback: int = config.OBV_LOOKBACK
-) -> float:
+) -> float | None:
     """창(lookback) 내 OBV 상대강도 − 가격 상대강도. 상승 다이버전스=+, 하락=−, 동행≈0.
 
     각 변화량을 창 내 범위로 정규화(−1~+1)해 스케일 차이를 제거한다.
+
+    창을 못 채우면 None(계산 불가). 창은 찼는데 가격·OBV 가 완전 횡보라 범위가 0이면
+    0.0 — 이건 결측이 아니라 "다이버전스 없음"이라는 진짜 관측이다. 둘을 구분한다.
     """
     if len(close) < lookback + 1:
-        return 0.0
+        return None
     ob = obv(close, volume)
     c = close.iloc[-(lookback + 1):]
     o = ob.iloc[-(lookback + 1):]
     c_rng = c.max() - c.min()
     o_rng = o.max() - o.min()
     if c_rng == 0 or o_rng == 0:
-        return 0.0
+        return 0.0  # 완전 횡보 = 다이버전스 없음 (관측된 사실)
     price_norm = (c.iloc[-1] - c.iloc[0]) / c_rng
     obv_norm = (o.iloc[-1] - o.iloc[0]) / o_rng
     return float(obv_norm - price_norm)
@@ -189,13 +213,19 @@ def atr_band_position(
     close: pd.Series,
     period: int = config.BB_PERIOD,
     mult: float = config.ATR_BAND_MULT,
-) -> float:
-    """현재가의 ATR밴드 내 위치. 0=하단, 0.5=중심, 1=상단."""
+) -> float | None:
+    """현재가의 ATR밴드 내 위치. 0=하단, 0.5=중심, 1=상단.
+
+    밴드가 아직 안 만들어졌으면(SMA(20)·ATR(14) 워밍업) None.
+    밴드는 있는데 폭이 0이면(완전 횡보) 0.5 — 현재가가 곧 중심이라는 관측이다.
+    """
     upper, _mid, lower = atr_band(high, low, close, period, mult)
     u, l, c = upper.iloc[-1], lower.iloc[-1], close.iloc[-1]
     width = u - l
-    if pd.isna(width) or width == 0:
-        return 0.5
+    if pd.isna(width):
+        return None  # 봉 부족 — 밴드 자체가 없다
+    if width == 0:
+        return 0.5  # 폭 0 = 현재가가 중심 (관측된 사실)
     return float((c - l) / width)
 
 
@@ -294,7 +324,11 @@ def flow_metrics(investor_flow: dict, turnover_eok: float = 0.0) -> dict[str, fl
 # ── 오케스트레이터 ─────────────────────────────────────────────
 @dataclass
 class IndicatorSet:
-    """한 종목의 계산된 원시 지표 묶음. scoring.score_stock의 입력."""
+    """한 종목의 계산된 원시 지표 묶음. scoring.score_stock의 입력.
+
+    지표 값은 float 또는 None 이다. None = "봉이 모자라 계산 불가"이지 "중립"이 아니다.
+    소비자(scoring·라우트)는 None 을 0 으로 치환하지 말고 그 지표를 빼고 계산해야 한다.
+    """
 
     trend: dict = field(default_factory=dict)
     momentum: dict = field(default_factory=dict)
@@ -303,13 +337,31 @@ class IndicatorSet:
     flow: dict = field(default_factory=dict)
     # 리스크 계산·표시에 필요한 파생값
     last_close: float = 0.0
-    last_atr: float = 0.0
+    last_atr: float | None = 0.0
+    # 계산에 쓰인 봉 개수. "봉 10/14 — ATR 계산 불가" 같은 안내의 근거다.
+    bars: int = 0
+
+    def missing(self) -> list[str]:
+        """None 인 지표 키들. config.INDICATOR_MIN_BARS 의 키와 같은 이름을 쓴다."""
+        out = [
+            key
+            for cat in (self.trend, self.momentum, self.volume, self.volatility, self.flow)
+            for key, value in cat.items()
+            if value is None
+        ]
+        if self.last_atr is None:
+            out.append("atr")
+        return out
 
 
 def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -> IndicatorSet:
     """OHLCV(+수급)로 전 카테고리 원시 지표를 계산.
 
     말단(latest) 스칼라 위주로 반환한다 — 스코어링은 현재 시점 판단이 목적.
+
+    봉이 모자라 계산이 안 되는 지표는 None 이다. 예전엔 NaN 을 0.0 으로 바꿨는데,
+    그건 결측을 신호로 둔갑시켰다: 장 시작 9분(봉 10개)에 RSI 가 0.0 으로 나오고
+    scoring 이 그걸 -100점(극단적 과매도)으로 읽어 종목이 "매도"로 찍혔다.
     """
     close, high, low, volume = ohlcv["close"], ohlcv["high"], ohlcv["low"], ohlcv["volume"]
 
@@ -320,9 +372,12 @@ def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -
     obv_div = obv_divergence(close, volume)
     atr_pos = atr_band_position(high, low, close)
 
-    def last(series: pd.Series) -> float:
+    def last(series: pd.Series) -> float | None:
+        """말단 값. NaN(워밍업 미완)은 None 으로 — 0.0 으로 뭉개지 않는다."""
         val = series.iloc[-1]
-        return 0.0 if pd.isna(val) else float(val)
+        return None if pd.isna(val) else float(val)
+
+    last_close = last(close)
 
     return IndicatorSet(
         trend={
@@ -338,6 +393,8 @@ def compute_indicators(ohlcv: pd.DataFrame, investor_flow: dict | None = None) -
         volume={"surge": volume_surge(volume)},
         volatility={"pct_b": last(pct_b), "atr_band": atr_pos},
         flow={**flow_metrics(investor_flow or {}, turnover(ohlcv)), "obv": obv_div},
-        last_close=last(close),
+        # 종가는 봉이 하나만 있어도 있다. 없으면 빈 프레임이라 애초에 종목이 아니다.
+        last_close=last_close if last_close is not None else 0.0,
         last_atr=last(atr_series),
+        bars=len(ohlcv),
     )

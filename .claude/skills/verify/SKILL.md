@@ -54,8 +54,33 @@ node drive.mjs                      # chromium.launch() → localhost:5173
 - 가중치는 **라이브 적용**이다(저장 버튼 없음). 슬라이더 변경 → 300ms 디바운스 → `/api/signal?weights=...` 재요청.
 - 영속은 `localStorage["signal_service.weights.v1"]`. 저장값은 슬라이더 **raw**(합 100 아님), 전송값은 **정규화**(합 100).
 
+## 장 초반(워밍업) 재현
+
+지표는 봉이 쌓여야 나온다(ATR 14봉, RSI 15봉, 이평배열 60봉 — `config.INDICATOR_MIN_BARS`).
+장중에 붙으면 봉이 이미 많아 이 경로를 못 밟는다. MockProvider 분봉 앞머리를 잘라 재현한다:
+
+```python
+class WarmupProvider:            # 분봉만 N개로 자르고 나머지는 MockProvider 그대로
+    def get_minute_ohlcv(self, ticker, interval="1m"):
+        full = MockProvider().get_minute_ohlcv(ticker, interval)
+        out = full.head(N).copy(); out.attrs = dict(full.attrs); return out
+    def __getattr__(self, name): return getattr(MockProvider(), name)
+
+deps.PROVIDER = WarmupProvider(10)   # 개장 9분차
+```
+
+`backend/tests/test_warmup.py` 가 이 패턴을 쓴다 — 새 검증은 거기서 출발하면 된다.
+
+**분 단위 스윕을 돌릴 땐 `SNAPSHOT_DB_PATH=:memory:` 를 반드시 걸어라.** 파일 DB 면
+첫 분에 만든 스냅샷이 남아서 이후 분에 재수집이 안 된다(라우트는 스냅샷이 있으면 안 만든다)
+— 봉 개수가 1에 고정된 채로 "전부 통과"처럼 보인다.
+
 ## 알려진 함정
 
-- `_ds_bundle.js` 안의 컴포넌트는 소스 `.jsx` 를 고쳐도 반영 안 된다. **예외: SettingsPanel** —
-  `main.jsx:10` 이 번들 뒤에 소스를 다시 import 해 `window.SettingsPanel` 을 덮어쓴다.
-- 콘솔에 한글이 깨져 보이는 건 Windows 터미널 인코딩 문제지 데이터 문제가 아니다.
+- `_ds_bundle.js` 안의 컴포넌트는 소스 `.jsx` 를 고쳐도 반영 안 된다(IndicatorTable·DirectionGauge 등)
+  — 소스와 번들을 **함께** 고쳐야 한다. **예외: SettingsPanel** — `main.jsx:10` 이 번들 뒤에
+  소스를 다시 import 해 `window.SettingsPanel` 을 덮어쓴다.
+- 콘솔에 한글이 깨져 보이는 건 Windows 터미널 인코딩(cp949) 문제지 데이터 문제가 아니다.
+  파이썬을 붙일 땐 `PYTHONIOENCODING=utf-8` 을 걸어라 — em-dash(—) 하나에 프로세스가 죽는다.
+- 실 KIS(`STOCK_PROVIDER=auto`)로 붙으면 **장 시작 직후 지표가 대부분 None 이다**. 500 은 이제
+  안 나지만(워밍업 처리 완료) 화면이 "봉 부족" 투성이가 된다 — 버그가 아니라 정상이다.

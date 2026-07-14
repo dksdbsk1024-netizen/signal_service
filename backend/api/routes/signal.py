@@ -108,7 +108,11 @@ def _parse_weights(raw: str | None) -> dict[str, float] | None:
 
 
 def _signal(snapshot: dict, weights: dict[str, float] | None) -> dict:
-    """스냅샷 → 신호 블록. 가중치를 주면 원지표에서 재채점한다."""
+    """스냅샷 → 신호 블록. 가중치를 주면 원지표에서 재채점한다.
+
+    coverage 는 스코어에 실제로 반영된 가중치 비율이다. 워밍업 중에는 1 미만이고,
+    프론트가 "신뢰도 낮음" 배지로 쓴다. final_score 가 None 이면 가용 지표가 0개다.
+    """
     if weights is None:
         # 기본 경로 — 수집 시점에 DEFAULT_WEIGHTS 로 구운 값을 그대로 낸다.
         return {
@@ -116,6 +120,8 @@ def _signal(snapshot: dict, weights: dict[str, float] | None) -> dict:
             "label": snapshot["label"],
             "contributions": json.loads(snapshot["contributions_json"]),
             "weights": config.DEFAULT_WEIGHTS,
+            "coverage": snapshot["coverage"],
+            "bars": snapshot["bars"],
         }
 
     # 재채점 — 순수 계산이다. provider 를 건드리지 않으므로 읽기전용을 깨지 않는다.
@@ -126,7 +132,38 @@ def _signal(snapshot: dict, weights: dict[str, float] | None) -> dict:
         "label": result.label,
         "contributions": [asdict(c) for c in result.contributions],
         "weights": weights,
+        "coverage": result.coverage,
+        "bars": ind.bars,
     }
+
+
+def _trade_plan(snapshot: dict, entry: float | None, direction: str,
+                account: float, risk_pct: float) -> tuple[dict | None, dict | None]:
+    """(매매계획, 불가 사유). 손절·목표는 ATR 기반이라 ATR 이 없으면 만들 수 없다.
+
+    장 시작 후 14분간(1분봉 14개 미만) ATR 이 없다. 예전엔 ATR 을 0.0 으로 채워
+    risk_plan 이 ValueError 를 던졌고 /api/signal 이 통째로 500 났다 — 데이트레이딩에
+    가장 중요한 시간대에 탭1이 죽었다. 이제 계획만 비우고 나머지는 정상으로 내보낸다.
+
+    가짜 손절가를 만들지 않는 이유는 자명하다: 손절가 0원은 손절이 아니라 파산이다.
+    """
+    atr_value = snapshot["last_atr"]
+    if atr_value is None or atr_value <= 0:
+        required = config.INDICATOR_MIN_BARS["atr"]
+        return None, {
+            "reason": "insufficient_bars",
+            "bars": snapshot["bars"],
+            "required": required,
+            "message": (
+                f"봉 {snapshot['bars']}/{required}개 — ATR({config.ATR_PERIOD}) 계산 불가라 "
+                f"손절·목표가를 낼 수 없습니다. 봉이 쌓이면 자동으로 나옵니다."
+            ),
+        }
+
+    entry_price = entry if entry is not None else snapshot["last_close"]
+    plan = scoring.risk_plan(entry_price, atr_value, direction)
+    position = scoring.position_size(account, risk_pct, plan["entry"], plan["stop"])
+    return {**plan, "position": position}, None
 
 
 @router.get("/signal/{ticker}")
@@ -141,16 +178,15 @@ def get_signal(
     ),
 ):
     snapshot = _snapshot_or_collect(ticker)
-
-    entry_price = entry if entry is not None else snapshot["last_close"]
-    plan = scoring.risk_plan(entry_price, snapshot["last_atr"], direction)
-    position = scoring.position_size(account, risk_pct, plan["entry"], plan["stop"])
+    plan, plan_unavailable = _trade_plan(snapshot, entry, direction, account, risk_pct)
 
     return {
         "ticker": ticker,
         "header": _header(snapshot),
         "signal": _signal(snapshot, _parse_weights(weights)),
-        "trade_plan": {**plan, "position": position},
+        "trade_plan": plan,
+        # 계획이 없을 때만 채워진다. 프론트가 매매계획 섹션에 이 message 를 띄운다.
+        "trade_plan_unavailable": plan_unavailable,
         # 수집 시각. 프론트가 "N초 전 갱신" / "지연" 배지에 쓴다.
         "as_of": snapshot["as_of"],
         "stale": bool(snapshot["stale"]),

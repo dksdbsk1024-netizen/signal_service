@@ -81,25 +81,30 @@ def get_technical(
     }
     overlays["fibonacci"] = ind_mod.fibonacci_levels(high, low)
 
-    # 지표 테이블 — 현재값 + 신호 (scoring 정규화 재사용)
+    # 지표 테이블 — 현재값 + 신호 (scoring 정규화 재사용).
+    # 봉이 모자란 지표는 value=None, signal="봉 부족" 이다. 0.0 을 찍어 놓고 "중립"이라
+    # 하면, 그 "중립"은 관측이 아니라 우리가 지어낸 말이 된다.
+    def _row(name: str, key: str, value: float | None, digits: int, score_fn=None) -> dict:
+        required = config.INDICATOR_MIN_BARS[key]
+        if value is None:
+            return {"name": name, "value": None, "signal": "봉 부족",
+                    "required_bars": required, "bars": ind.bars}
+        signal = _signal_label(score_fn(value)) if score_fn else "-"
+        return {"name": name, "value": round(value, digits), "signal": signal,
+                "required_bars": required, "bars": ind.bars}
+
     table = [
-        {"name": "RSI(14)", "value": round(ind.momentum["rsi"], 1),
-         "signal": _signal_label(scoring.score_rsi(ind.momentum["rsi"]))},
-        {"name": "MACD Hist", "value": round(ind.momentum["macd_hist"], 2),
-         "signal": _signal_label(scoring.score_macd_hist(ind.momentum["macd_hist"], ind.last_close))},
-        {"name": "스토캐스틱 %K", "value": round(ind.momentum["stoch_k"], 1),
-         "signal": _signal_label(scoring.score_stoch(ind.momentum["stoch_k"]))},
-        {"name": "볼린저 %b", "value": round(ind.volatility["pct_b"], 2),
-         "signal": _signal_label(scoring.score_pct_b(ind.volatility["pct_b"]))},
-        {"name": "이평 배열", "value": round(ind.trend["ma_alignment"], 2),
-         "signal": _signal_label(scoring.score_ma_alignment(ind.trend["ma_alignment"]))},
-        {"name": "VWAP 괴리(%)", "value": round(ind.trend["price_vs_vwap"], 2),
-         "signal": _signal_label(scoring.score_price_vs_vwap(ind.trend["price_vs_vwap"]))},
-        {"name": "OBV 다이버전스", "value": round(ind.flow["obv"], 2),
-         "signal": _signal_label(scoring.score_obv(ind.flow["obv"]))},
-        {"name": "ATR밴드 위치", "value": round(ind.volatility["atr_band"], 2),
-         "signal": _signal_label(scoring.score_atr_band(ind.volatility["atr_band"]))},
-        {"name": "ATR(14)", "value": round(ind.last_atr, 1), "signal": "-"},
+        _row("RSI(14)", "rsi", ind.momentum["rsi"], 1, scoring.score_rsi),
+        _row("MACD Hist", "macd_hist", ind.momentum["macd_hist"], 2,
+             lambda v: scoring.score_macd_hist(v, ind.last_close)),
+        _row("스토캐스틱 %K", "stoch_k", ind.momentum["stoch_k"], 1, scoring.score_stoch),
+        _row("볼린저 %b", "pct_b", ind.volatility["pct_b"], 2, scoring.score_pct_b),
+        _row("이평 배열", "ma_alignment", ind.trend["ma_alignment"], 2, scoring.score_ma_alignment),
+        _row("VWAP 괴리(%)", "price_vs_vwap", ind.trend["price_vs_vwap"], 2,
+             scoring.score_price_vs_vwap),
+        _row("OBV 다이버전스", "obv", ind.flow["obv"], 2, scoring.score_obv),
+        _row("ATR밴드 위치", "atr_band", ind.volatility["atr_band"], 2, scoring.score_atr_band),
+        _row("ATR(14)", "atr", ind.last_atr, 1),
     ]
 
     # 분봉 출처 배지 — provider 가 df.attrs 에 달아둔 플래그를 그대로 올린다.
@@ -111,6 +116,7 @@ def get_technical(
         "candles": candles,
         "overlays": overlays,
         "indicators_table": table,
+        "bars": ind.bars,
         "params": {"ma": config.MA_PERIODS, "rsi": config.RSI_PERIOD},
         "source": attrs.get("source", "mock"),
         "mock": bool(attrs.get("mock", True)),

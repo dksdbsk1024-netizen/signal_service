@@ -56,6 +56,31 @@ VOL_LOOKBACK = 20  # 거래량 급증 판정 기준 이동평균 기간
 OBV_LOOKBACK = 20  # OBV 다이버전스 판정 창
 ATR_BAND_MULT = 2.0  # ATR밴드 폭 배수 (중심 SMA ± mult×ATR)
 
+# ── 지표별 최소 봉 수 (워밍업) ─────────────────────────────────
+# 분봉은 09:00 부터 쌓인다. 09:09 면 봉이 10개뿐이라 ATR(14)·RSI(14) 는 계산 자체가
+# 불가능하다. 예전엔 NaN 을 0.0 으로 뭉갰는데, RSI 0.0 은 "결측"이 아니라 "극단적
+# 과매도"(-100점)로 읽힌다 — 데이터 부족이 강한 매도 신호로 둔갑했다.
+# 이제 봉이 모자라면 지표를 None 으로 두고, 스코어링이 그 지표를 빼고 계산한다.
+#
+# 값은 "그 지표가 첫 유효값을 내는 데 필요한 봉 수". 지표 계산식에서 유도된다:
+# Wilder 평활(RSI·ATR)은 period 개, 롤링(BB·MA)은 window 개, 스토캐스틱은
+# %K 창 + 평활, MACD 히스토그램은 느린 EMA + 시그널 EMA 만큼 데워야 한다.
+#
+# 이 숫자는 화면에 "봉 10/14" 로 그대로 나간다 — 실제 계산식과 어긋나면 안 된다.
+# 특히 RSI 는 close.diff() 가 첫 봉을 먹어서 period 가 아니라 period+1 봉이 필요하다.
+INDICATOR_MIN_BARS: dict[str, int] = {
+    "price_vs_vwap": 1,                          # VWAP 은 누적이라 첫 봉부터 나온다
+    "atr": ATR_PERIOD,                           # 14  ← 매매계획(손절·목표)이 여기 걸린다
+    "rsi": RSI_PERIOD + 1,                       # 15  (diff 로 첫 봉을 잃는다)
+    "stoch_k": STOCH_K + STOCH_SMOOTH - 1,       # 16  (%K 창 14 + 평활 3)
+    "pct_b": BB_PERIOD,                          # 20
+    "atr_band": BB_PERIOD,                       # 20  (중심선 SMA(20) 이 ATR 보다 늦다)
+    "surge": VOL_LOOKBACK + 1,                   # 21  (직전 20봉 평균 + 현재봉)
+    "obv": OBV_LOOKBACK + 1,                     # 21
+    "macd_hist": MACD_SLOW + MACD_SIGNAL - 1,    # 34  (느린 EMA 26 + 시그널 EMA 9)
+    "ma_alignment": max(MA_PERIODS),             # 60  ← 장 시작 후 한 시간
+}
+
 # 분봉 interval — KIS는 1분봉만 주고 그 위는 resample. 일봉(1d)은 별도 TR이라 미지원.
 SUPPORTED_INTERVALS: tuple[str, ...] = ("1m", "5m")
 INTERVAL_PATTERN = "^(1m|5m)$"

@@ -46,6 +46,8 @@ def _row(ticker: str = "005930", **over) -> dict:
         ),
         "last_close": 71_000.0,
         "last_atr": 850.0,
+        "bars": 120,
+        "coverage": 1.0,
         "market_status": "open",
         "source": "kis",
         "mock": 0,

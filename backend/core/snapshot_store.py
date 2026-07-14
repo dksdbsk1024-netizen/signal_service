@@ -41,6 +41,8 @@ COLUMNS: tuple[str, ...] = (
     "indicators_json",
     "last_close",
     "last_atr",
+    "bars",       # 지표 계산에 쓰인 봉 개수. "봉 10/14 — 계산 불가" 안내의 근거.
+    "coverage",   # 스코어에 실제로 반영된 가중치 비율(0~1). 워밍업 중 1 미만.
     "market_status",
     "source",
     "mock",
@@ -49,6 +51,12 @@ COLUMNS: tuple[str, ...] = (
     "as_of",         # 이 스냅샷을 만든 시각. 신선도 표시는 이 값 기준.
     "tier",
 )
+
+# 정당하게 비어 있을 수 있는 컬럼 — 장 시작 직후 봉이 모자란 구간.
+# ATR(14) 은 봉 14개가 필요하고, 그게 없으면 매매계획(손절·목표)을 못 만든다.
+# 스코어는 가용 지표만으로 재정규화하지만, 가용 지표가 아예 0개면 스코어도 없다.
+# 이 컬럼들의 NULL 은 "모른다"는 정직한 표시다. 나머지 컬럼의 NULL 은 버그다.
+NULLABLE: frozenset[str] = frozenset({"last_atr", "final_score", "label", "coverage"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS stock_snapshot (
@@ -67,6 +75,8 @@ CREATE TABLE IF NOT EXISTS stock_snapshot (
     indicators_json    TEXT,
     last_close         REAL,
     last_atr           REAL,
+    bars               INTEGER,
+    coverage           REAL,
     market_status      TEXT,
     source             TEXT,
     mock               INTEGER,
@@ -129,11 +139,24 @@ class SnapshotStore:
         self._conn.execute("DELETE FROM stock_snapshot")
 
     def upsert(self, row: dict) -> None:
-        """한 종목의 스냅샷을 덮어쓴다. 키가 하나라도 빠지면 KeyError.
+        """한 종목의 스냅샷을 덮어쓴다. 키가 빠지면 KeyError, 값이 부당하게 None 이면 ValueError.
 
         조용히 NULL 을 넣지 않는 이유: 스냅샷의 결손 필드는 프론트에서
         '0원 / 스코어 0' 처럼 그럴듯한 거짓말로 보인다. 수집 단계에서 터뜨린다.
+
+        예외는 NULLABLE 뿐이다. 장 시작 직후엔 봉이 모자라 ATR·스코어가 정말로
+        없다 — 그건 결손이 아니라 관측 가능한 사실이고, 라우트가 "봉 10/14" 로
+        설명한다. 나머지 컬럼의 None 은 여전히 버그다.
         """
+        missing_required = [
+            c for c in COLUMNS if c not in NULLABLE and row[c] is None
+        ]
+        if missing_required:
+            raise ValueError(
+                f"스냅샷 필수 컬럼이 None 이다: {missing_required} — "
+                f"수집 단계 버그다(NULLABLE 이 아닌 컬럼은 값이 있어야 한다)"
+            )
+
         values = tuple(row[c] for c in COLUMNS)
         with self._lock:
             self._conn.execute(_UPSERT, values)

@@ -93,10 +93,16 @@ export default function OverviewTab({ ticker, weights }) {
   const header = data?.header;
   const signal = data?.signal;
   const plan = data?.trade_plan;
+  // 장 초반엔 봉이 모자라 계획을 못 만든다 — 서버가 사유를 함께 준다.
+  const planBlocked = data?.trade_plan_unavailable;
   const name = NAME_BY_TICKER[ticker] || ticker;
 
   if (error) return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
   if (!data) return <Banner>{loading ? "신호 불러오는 중…" : "종목을 선택하세요."}</Banner>;
+
+  // coverage < 1 = 일부 지표가 봉 부족으로 빠진 채 계산된 스코어.
+  const coverage = signal.coverage;
+  const lowConfidence = coverage != null && coverage < 1;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
@@ -108,17 +114,33 @@ export default function OverviewTab({ ticker, weights }) {
         )}
       </Card>
 
-      <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-4)", padding: "var(--space-8) var(--space-6)", boxShadow: "var(--shadow-sm)" }}>
-        {DirectionGauge && <DirectionGauge score={signal.final_score} size="lg" subtitle={`${header.as_of} 갱신`} />}
-        <LabelBadge label={signal.label} />
-      </Card>
+      {lowConfidence && (
+        <Banner tone="warn">
+          신뢰도 낮음 — 봉 {signal.bars}개. 지표 가중치의 {Math.round(coverage * 100)}%만
+          반영됐습니다. 봉이 쌓이면 자동으로 보정됩니다.
+        </Banner>
+      )}
 
-      <Card style={{ padding: "var(--space-5) var(--space-6)" }}>
-        <SectionLabel>근거 — 지표 기여도 (상위 {signal.contributions.length}개)</SectionLabel>
-        {ContributionBar && (
-          <ContributionBar items={signal.contributions.map((c) => ({ name: c.name, score: c.contribution, weight: c.weight }))} />
+      <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-4)", padding: "var(--space-8) var(--space-6)", boxShadow: "var(--shadow-sm)" }}>
+        {signal.final_score == null ? (
+          // 스코어 0/"중립"을 찍으면 안 된다 — 못 구한 것과 중립은 다른 말이다.
+          <Banner>지표 산출 불가 — 봉 {signal.bars}개. 잠시 후 다시 표시됩니다.</Banner>
+        ) : (
+          <React.Fragment>
+            {DirectionGauge && <DirectionGauge score={signal.final_score} size="lg" subtitle={`${header.as_of} 갱신`} />}
+            <LabelBadge label={signal.label} />
+          </React.Fragment>
         )}
       </Card>
+
+      {signal.contributions.length > 0 && (
+        <Card style={{ padding: "var(--space-5) var(--space-6)" }}>
+          <SectionLabel>근거 — 지표 기여도 (상위 {signal.contributions.length}개)</SectionLabel>
+          {ContributionBar && (
+            <ContributionBar items={signal.contributions.map((c) => ({ name: c.name, score: c.contribution, weight: c.weight }))} />
+          )}
+        </Card>
+      )}
 
       <SectionEyebrow index="B" title="매매 계획 — 신호를 실행으로" />
 
@@ -127,7 +149,8 @@ export default function OverviewTab({ ticker, weights }) {
           <SectionLabel>입력 (변경 시 서버 재계산)</SectionLabel>
           <div>
             <FieldLabel hint={`현재가 ${header.price.toLocaleString("ko-KR")}`}>진입가</FieldLabel>
-            <NumberField value={entry ?? plan.entry} onChange={setEntry} suffix="원" />
+            {/* 계획이 없으면 서버가 채워 준 진입가도 없다 → 현재가로 떨어진다. */}
+            <NumberField value={entry ?? plan?.entry ?? header.price} onChange={setEntry} suffix="원" />
           </div>
           <div>
             <FieldLabel>계좌 규모</FieldLabel>
@@ -140,7 +163,18 @@ export default function OverviewTab({ ticker, weights }) {
           <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>방향: 롱(매수) 기준 · 손절 1×ATR</div>
         </Card>
 
-        <TradePlanView plan={plan} />
+        {plan ? (
+          <TradePlanView plan={plan} />
+        ) : (
+          // 가짜 손절가를 그리느니 왜 못 그리는지 말한다. 손절가 0원은 손절이 아니다.
+          <Card>
+            <SectionLabel>손절가 · 목표가 (ATR 기반)</SectionLabel>
+            <Banner tone="warn">
+              {planBlocked?.message
+                || "ATR을 계산할 수 없어 손절·목표가를 낼 수 없습니다."}
+            </Banner>
+          </Card>
+        )}
       </div>
     </div>
   );

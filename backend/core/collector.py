@@ -85,7 +85,11 @@ def collect_ticker(ticker: str, name: str, store: SnapshotStore | None = None,
         # 사용자 가중치로 재채점하려면 이게 필요하다(signal 라우트).
         "indicators_json": json.dumps(asdict(ind), ensure_ascii=False),
         "last_close": ind.last_close,
+        # 장 시작 직후엔 봉이 14개가 안 돼 ATR 이 없다(None). 0.0 으로 채우면
+        # risk_plan 이 "손절가 = 진입가" 라는 치명적 거짓말을 만든다.
         "last_atr": ind.last_atr,
+        "bars": ind.bars,
+        "coverage": result.coverage,
         "market_status": header["market_status"],
         "source": header["source"],
         "mock": int(header["mock"]),

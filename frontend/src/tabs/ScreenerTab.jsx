@@ -19,6 +19,15 @@ function changeColor(pct) {
 
 // 중앙(0) 기준 좌우로 뻗는 스코어 막대 (-100~+100).
 function ScoreBar({ score }) {
+  // 장 초반엔 가용 지표가 0개라 스코어가 없을 수 있다. 0점 막대를 그리면
+  // "중립"이라는 없는 관측을 만들어낸다 — 막대 대신 사유를 쓴다.
+  if (score == null) {
+    return (
+      <div style={{ height: 16, display: "flex", alignItems: "center", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
+        봉 부족
+      </div>
+    );
+  }
   const half = Math.min(50, (Math.abs(score) / 100) * 50);
   const color = scoreColor(score);
   return (
@@ -101,10 +110,16 @@ export default function ScreenerTab({ onPick }) {
                 <td style={td}><ScoreBar score={r.final_score} /></td>
                 <td style={td}><LabelBadge label={r.label} /></td>
                 <td style={{ ...td, textAlign: "right" }}>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{r.top_contributor.name} </span>
-                  <span className="ds-numeric" style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: r.top_contributor.contribution >= 0 ? "var(--signal-buy)" : "var(--signal-sell)" }}>
-                    {r.top_contributor.contribution > 0 ? "+" : ""}{r.top_contributor.contribution}
-                  </span>
+                  {r.top_contributor ? (
+                    <React.Fragment>
+                      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{r.top_contributor.name} </span>
+                      <span className="ds-numeric" style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: r.top_contributor.contribution >= 0 ? "var(--signal-buy)" : "var(--signal-sell)" }}>
+                        {r.top_contributor.contribution > 0 ? "+" : ""}{r.top_contributor.contribution}
+                      </span>
+                    </React.Fragment>
+                  ) : (
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}

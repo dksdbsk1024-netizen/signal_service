@@ -4,6 +4,8 @@ const SIGNAL_META = {
   buy: { label: "매수", color: "var(--signal-buy)", bg: "var(--signal-buy-bg)" },
   sell: { label: "매도", color: "var(--signal-sell)", bg: "var(--signal-sell-bg)" },
   neutral: { label: "중립", color: "var(--signal-neutral)", bg: "var(--signal-neutral-bg)" },
+  // 봉 부족 — 계산이 안 된 것이지 "중립"이 아니다. 둘을 같은 칩으로 찍으면 거짓말이 된다.
+  unknown: { label: "봉 부족", color: "var(--text-tertiary)", bg: "var(--bg-inset)" },
 };
 
 /**
