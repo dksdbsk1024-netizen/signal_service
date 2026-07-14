@@ -103,6 +103,37 @@ INDICATOR_WEIGHTS: dict[str, dict[str, float]] = {
     "flow": {"smart_money": 1.0, "obv": 1.0},
 }
 
+# scoring 의 세부지표 이름 → 그 지표가 살아나는 봉 수.
+# INDICATOR_WEIGHTS 와 키가 같아야 신뢰도(coverage) 를 봉 수만으로 예측할 수 있다.
+# 이름이 INDICATOR_MIN_BARS 와 두 군데서 갈린다:
+#   stoch → stoch_k (scoring 은 %K 만 쓴다)
+#   smart_money → 분봉이 아니라 수급 TR 에서 온다. 봉 0개여도 값이 있다.
+# 이 표가 INDICATOR_MIN_BARS 와 어긋나지 않는지는 test_warmup 이 강제한다.
+SCORE_DETAIL_MIN_BARS: dict[str, dict[str, int]] = {
+    "trend": {"ma_alignment": INDICATOR_MIN_BARS["ma_alignment"],
+              "price_vs_vwap": INDICATOR_MIN_BARS["price_vs_vwap"]},
+    "momentum": {"rsi": INDICATOR_MIN_BARS["rsi"],
+                 "macd_hist": INDICATOR_MIN_BARS["macd_hist"],
+                 "stoch": INDICATOR_MIN_BARS["stoch_k"]},
+    "volume": {"surge": INDICATOR_MIN_BARS["surge"]},
+    "volatility": {"pct_b": INDICATOR_MIN_BARS["pct_b"],
+                   "atr_band": INDICATOR_MIN_BARS["atr_band"]},
+    "flow": {"smart_money": 1, "obv": INDICATOR_MIN_BARS["obv"]},
+}
+
+# ── 신호를 말할 만큼인가 (워밍업 게이트) ───────────────────────
+# 신뢰도가 이 값 미만이면 게이지의 숫자·라벨을 아예 숨긴다. 흐리게 하는 게 아니라
+# 안 띄운다 — 못 믿을 값을 믿을 만한 값과 같은 크기로 보여주는 게 위험의 본질이다.
+#
+# 0.6 인 이유: 신뢰도 곡선은 계단이고 53.3% 와 83.3% 사이엔 아무 지점이 없다.
+# 55~83% 어디를 찍어도 숫자가 뜨는 시점은 똑같이 봉 21개(09:20)다 — 임계치 선택에
+# 둔감하다. 그 시점에 지표 10개 중 8개가 켜지고(MACD 34봉·이평배열 60봉만 남는다)
+# 5개 카테고리가 전부 실제 점수를 갖는다. 재정규화로 메꾼 카테고리가 없다는 뜻이다.
+#
+# 100%(봉 60개 = 09:59)를 기다리는 건 과하다 — 데이트레이딩은 장 초반 30분이 승부다.
+# 25%(개장 직후, VWAP 하나)로 방향을 단정하는 건 위험하다. 20분이 그 사이다.
+SCORE_MIN_COVERAGE = 0.6
+
 # ── 리스크 계산 (탭1 매매계획) ──────────────────────────────────
 # ATR 배수 — 손절/목표 후보. 손절은 1×ATR, 목표는 1.5×/2× 등으로 조합해 R:R 산출.
 ATR_MULTIPLES: list[float] = [1.0, 1.5, 2.0]

@@ -18,13 +18,13 @@ function changeColor(pct) {
 }
 
 // 중앙(0) 기준 좌우로 뻗는 스코어 막대 (-100~+100).
-function ScoreBar({ score }) {
-  // 장 초반엔 가용 지표가 0개라 스코어가 없을 수 있다. 0점 막대를 그리면
-  // "중립"이라는 없는 관측을 만들어낸다 — 막대 대신 사유를 쓴다.
-  if (score == null) {
+// provisional = 신뢰도 미달. 탭1 게이지와 같은 원칙으로 숫자를 안 띄운다 —
+// 목록에서 못 믿을 스코어를 정렬 상위에 올리면 그게 곧 매매 유도가 된다.
+function ScoreBar({ score, provisional }) {
+  if (score == null || provisional) {
     return (
       <div style={{ height: 16, display: "flex", alignItems: "center", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
-        봉 부족
+        집계 중…
       </div>
     );
   }
@@ -107,8 +107,9 @@ export default function ScreenerTab({ onPick }) {
                 <td style={{ ...td, textAlign: "right" }} className="ds-numeric">
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{fmtVolume(r.volume)}</span>
                 </td>
-                <td style={td}><ScoreBar score={r.final_score} /></td>
-                <td style={td}><LabelBadge label={r.label} /></td>
+                <td style={td}><ScoreBar score={r.final_score} provisional={r.provisional} /></td>
+                {/* 라벨("매도")도 결론이다 — 스코어를 숨기면서 라벨만 띄우면 앞뒤가 안 맞는다. */}
+                <td style={td}>{r.provisional ? <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>—</span> : <LabelBadge label={r.label} />}</td>
                 <td style={{ ...td, textAlign: "right" }}>
                   {r.top_contributor ? (
                     <React.Fragment>

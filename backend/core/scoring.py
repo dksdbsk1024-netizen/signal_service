@@ -167,6 +167,47 @@ def _category_scores(ind: IndicatorSet) -> dict[str, tuple[float | None, dict]]:
     }
 
 
+def coverage_at_bars(bars: int, weights: dict[str, float] | None = None) -> float:
+    """봉이 `bars` 개일 때 나올 신뢰도. 시세 데이터 없이 순수 산술로 예측한다.
+
+    지표가 언제 살아나는지는 config.SCORE_DETAIL_MIN_BARS 로 정해져 있으니,
+    실제 값을 계산하지 않아도 "몇 봉이면 신뢰도 몇 %" 를 알 수 있다.
+    """
+    weights = weights or config.DEFAULT_WEIGHTS
+    total_w = sum(weights.get(c, 0) for c in config.CATEGORIES)
+    if total_w <= 0:
+        return 0.0
+
+    covered = 0.0
+    for cat in config.CATEGORIES:
+        need = config.SCORE_DETAIL_MIN_BARS[cat]
+        iw = config.INDICATOR_WEIGHTS.get(cat, {})
+        cat_total = sum(iw.get(k, 1.0) for k in need)
+        if not cat_total:
+            continue
+        lit = sum(iw.get(k, 1.0) for k, min_bars in need.items() if bars >= min_bars)
+        covered += weights.get(cat, 0) * (lit / cat_total)
+    return covered / total_w
+
+
+def bars_for_signal(weights: dict[str, float] | None = None,
+                    threshold: float = config.SCORE_MIN_COVERAGE) -> int:
+    """신뢰도가 임계치를 넘는 최소 봉 수. 화면의 "봉 10/21" 에서 21 이 이 값이다.
+
+    가중치를 바꾸면 이 수도 바뀐다(수급 편중이면 더 일찍 넘는다) — 그래서 21 을
+    하드코딩하지 않는다. 사용자가 보는 목표치는 사용자의 가중치로 계산돼야 한다.
+    """
+    ceiling = max(
+        min_bars
+        for cat in config.CATEGORIES
+        for min_bars in config.SCORE_DETAIL_MIN_BARS[cat].values()
+    )
+    for bars in range(1, ceiling + 1):
+        if coverage_at_bars(bars, weights) >= threshold:
+            return bars
+    return ceiling  # 전 지표가 켜져도 임계치에 못 미치는 설정 — 방어적으로 최대치
+
+
 def _category_coverage(cat: str, detail: dict) -> float:
     """카테고리 안에서 실제로 쓰인 지표 가중치의 비율 (0~1).
 

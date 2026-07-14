@@ -15,7 +15,7 @@ import os
 
 from fastapi import APIRouter
 
-from ...core import collector
+from ...core import collector, config
 from ...core.snapshot_store import get_store
 
 router = APIRouter(prefix="/api", tags=["screener"])
@@ -38,12 +38,20 @@ def _row(snapshot: dict) -> dict:
     contributions = json.loads(snapshot["contributions_json"])
     # score_stock 이 기여 절대값 내림차순으로 정렬해 둔다 → 0번이 곧 1위.
     top = contributions[0] if contributions else None
+    coverage = snapshot["coverage"]
     return {
         "ticker": snapshot["ticker"],
         "name": snapshot["name"],
         "final_score": snapshot["final_score"],
         "label": snapshot["label"],
-        "coverage": snapshot["coverage"],
+        "coverage": coverage,
+        # 탭1 게이지와 같은 기준 — 신뢰도 미달이면 프론트가 스코어를 숨긴다.
+        # 스냅샷은 DEFAULT_WEIGHTS 로 구워지므로 여기선 기본 가중치 기준이다.
+        "provisional": (
+            snapshot["final_score"] is None
+            or coverage is None
+            or coverage < config.SCORE_MIN_COVERAGE
+        ),
         "top_contributor": (
             {"name": top["name"], "contribution": top["contribution"]} if top else None
         ),

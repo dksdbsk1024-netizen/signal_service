@@ -65,7 +65,8 @@ def test_screener_row_schema_is_unchanged(seeded, no_provider):
     row = client.get("/api/screener").json()["rows"][0]
 
     assert set(row) == {
-        "ticker", "name", "final_score", "label", "coverage", "top_contributor",
+        "ticker", "name", "final_score", "label", "coverage", "provisional",
+        "top_contributor",
         "price", "change", "change_pct", "volume", "market_status", "mock",
     }
     assert set(row["top_contributor"]) == {"name", "contribution"}

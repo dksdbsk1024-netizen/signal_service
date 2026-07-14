@@ -212,6 +212,105 @@ def test_score_is_none_when_nothing_is_computable():
     assert result.contributions == []
 
 
+# ── 신호 게이트 (신뢰도 임계치) ─────────────────────────────
+def test_score_detail_min_bars_matches_the_indicator_table():
+    """신뢰도 예측(coverage_at_bars)은 이 표에 의존한다 — 실제 지표와 어긋나면 안 된다."""
+    for cat, detail in config.SCORE_DETAIL_MIN_BARS.items():
+        # scoring 의 세부지표 이름과 INDICATOR_WEIGHTS 의 키가 같아야 한다.
+        assert set(detail) == set(config.INDICATOR_WEIGHTS[cat]), cat
+
+    # 이름이 갈리는 두 곳을 뺀 나머지는 INDICATOR_MIN_BARS 와 값이 같아야 한다.
+    renamed = {"stoch", "smart_money"}
+    for cat, detail in config.SCORE_DETAIL_MIN_BARS.items():
+        for key, bars in detail.items():
+            if key in renamed:
+                continue
+            assert bars == config.INDICATOR_MIN_BARS[key], f"{cat}.{key}"
+
+    assert config.SCORE_DETAIL_MIN_BARS["momentum"]["stoch"] == config.INDICATOR_MIN_BARS["stoch_k"]
+    # 수급은 분봉이 아니라 수급 TR 에서 온다 — 봉과 무관하게 첫 봉부터 있다.
+    assert config.SCORE_DETAIL_MIN_BARS["flow"]["smart_money"] == 1
+
+
+@pytest.mark.parametrize("bars", [1, 5, 14, 15, 16, 20, 21, 34, 45, 60, 120])
+def test_coverage_at_bars_predicts_the_real_coverage(bars):
+    """봉 수만으로 신뢰도를 예측할 수 있어야 한다 — 화면의 "봉 N/21" 이 여기서 나온다."""
+    ind = compute_indicators(session_ohlcv(bars), {"foreign": 10, "institution": 5, "program": 0})
+    actual = scoring.score_stock(ind).coverage
+
+    assert scoring.coverage_at_bars(bars) == pytest.approx(actual, abs=0.001)
+
+
+def test_signal_gate_opens_at_21_bars_with_default_weights():
+    """기본 가중치에서 신호는 봉 21개(09:20)에 열린다.
+
+    신뢰도 곡선은 계단이고 53.3%(봉 20) 와 83.3%(봉 21) 사이엔 아무 지점이 없다 —
+    임계치를 55% 로 하든 80% 로 하든 같은 봉에서 열린다. 그래서 이 경계는 튼튼하다.
+    """
+    assert scoring.bars_for_signal() == 21
+
+    assert scoring.coverage_at_bars(20) < config.SCORE_MIN_COVERAGE
+    assert scoring.coverage_at_bars(21) >= config.SCORE_MIN_COVERAGE
+
+    # 임계치를 이 구간 안에서 어떻게 흔들어도 결과가 같다(선택에 둔감하다).
+    for threshold in (0.55, 0.60, 0.70, 0.80):
+        assert scoring.bars_for_signal(threshold=threshold) == 21
+
+
+def test_bars_for_signal_follows_the_user_weights():
+    """게이트가 열리는 봉 수는 가중치마다 다르다 — 그래서 21 을 하드코딩하면 안 된다.
+
+    모멘텀 편중이면 봉 20 에 열린다(기본은 21). 모멘텀 3개 중 RSI(15)·스토캐스틱(16)이
+    먼저 켜져 2/3 가 차는데, 거기에 가중치를 몰아 놨으니 더 빨리 임계치를 넘는다.
+    사용자가 보는 목표치("봉 10/21")는 사용자의 가중치로 계산돼야 한다.
+    """
+    momentum_heavy = {"flow": 5, "trend": 5, "momentum": 80, "volume": 5, "volatility": 5}
+    momentum_bars = scoring.bars_for_signal(momentum_heavy)
+
+    assert momentum_bars != scoring.bars_for_signal()  # 기본(21)과 다르다
+
+    # 무슨 값이 나오든, 그 봉에서 처음 넘고 그 직전엔 못 넘어야 한다.
+    assert scoring.coverage_at_bars(momentum_bars, momentum_heavy) >= config.SCORE_MIN_COVERAGE
+    assert scoring.coverage_at_bars(momentum_bars - 1, momentum_heavy) < config.SCORE_MIN_COVERAGE
+
+
+def test_signal_is_provisional_below_the_threshold(monkeypatch):
+    monkeypatch.setattr(deps, "PROVIDER", WarmupProvider(bars=10))
+
+    s = client.get(f"/api/signal/{TICKER}").json()["signal"]
+
+    assert s["provisional"] is True
+    assert s["bars"] == 10
+    assert s["bars_for_signal"] == 21
+    assert s["min_coverage"] == config.SCORE_MIN_COVERAGE
+    # 값 자체는 내려간다 — 프론트가 숨길 뿐이다(검증·디버깅에 필요하다).
+    assert s["final_score"] is not None
+
+
+def test_signal_stops_being_provisional_at_the_gate(monkeypatch):
+    """봉 20개 → 집계 중. 봉 21개 → 숫자 표시. 경계가 정확해야 한다."""
+    monkeypatch.setattr(deps, "PROVIDER", WarmupProvider(bars=20))
+    close_store()
+    assert client.get(f"/api/signal/{TICKER}").json()["signal"]["provisional"] is True
+
+    monkeypatch.setattr(deps, "PROVIDER", WarmupProvider(bars=21))
+    close_store()
+    s = client.get(f"/api/signal/{TICKER}").json()["signal"]
+
+    assert s["provisional"] is False
+    assert s["final_score"] is not None
+    assert s["label"]
+
+
+def test_screener_marks_provisional_rows(monkeypatch):
+    monkeypatch.setattr(deps, "PROVIDER", WarmupProvider(bars=10))
+
+    rows = client.get("/api/screener").json()["rows"]
+
+    assert rows
+    assert all(r["provisional"] is True for r in rows)
+
+
 # ── 수집기·저장소 ───────────────────────────────────────────
 def test_collector_stores_null_atr_rather_than_zero(store, monkeypatch):
     monkeypatch.setattr(deps, "PROVIDER", WarmupProvider(bars=10))

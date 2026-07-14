@@ -110,31 +110,46 @@ def _parse_weights(raw: str | None) -> dict[str, float] | None:
 def _signal(snapshot: dict, weights: dict[str, float] | None) -> dict:
     """스냅샷 → 신호 블록. 가중치를 주면 원지표에서 재채점한다.
 
-    coverage 는 스코어에 실제로 반영된 가중치 비율이다. 워밍업 중에는 1 미만이고,
-    프론트가 "신뢰도 낮음" 배지로 쓴다. final_score 가 None 이면 가용 지표가 0개다.
+    coverage 는 스코어에 실제로 반영된 가중치 비율이다. 워밍업 중에는 1 미만이다.
+
+    provisional=True 면 신뢰도가 임계치에 못 미친다 — 프론트는 게이지 숫자·라벨을
+    숨기고 "집계 중" 으로 표시한다. 값을 안 내려보내는 게 아니라 "이걸 결론으로
+    읽지 말라" 는 표시를 함께 내려보낸다(디버깅·검증에는 값이 필요하다).
     """
     if weights is None:
         # 기본 경로 — 수집 시점에 DEFAULT_WEIGHTS 로 구운 값을 그대로 낸다.
-        return {
+        applied = config.DEFAULT_WEIGHTS
+        signal = {
             "final_score": snapshot["final_score"],
             "label": snapshot["label"],
             "contributions": json.loads(snapshot["contributions_json"]),
-            "weights": config.DEFAULT_WEIGHTS,
             "coverage": snapshot["coverage"],
             "bars": snapshot["bars"],
         }
+    else:
+        # 재채점 — 순수 계산이다. provider 를 건드리지 않으므로 읽기전용을 깨지 않는다.
+        applied = weights
+        ind = IndicatorSet(**json.loads(snapshot["indicators_json"]))
+        result = scoring.score_stock(ind, weights=weights)
+        signal = {
+            "final_score": result.final_score,
+            "label": result.label,
+            "contributions": [asdict(c) for c in result.contributions],
+            "coverage": result.coverage,
+            "bars": ind.bars,
+        }
 
-    # 재채점 — 순수 계산이다. provider 를 건드리지 않으므로 읽기전용을 깨지 않는다.
-    ind = IndicatorSet(**json.loads(snapshot["indicators_json"]))
-    result = scoring.score_stock(ind, weights=weights)
-    return {
-        "final_score": result.final_score,
-        "label": result.label,
-        "contributions": [asdict(c) for c in result.contributions],
-        "weights": weights,
-        "coverage": result.coverage,
-        "bars": ind.bars,
-    }
+    coverage = signal["coverage"]
+    signal["weights"] = applied
+    # 목표 봉 수는 가중치마다 다르다 — 수급 편중이면 더 일찍 임계치를 넘는다.
+    signal["bars_for_signal"] = scoring.bars_for_signal(applied)
+    signal["min_coverage"] = config.SCORE_MIN_COVERAGE
+    signal["provisional"] = (
+        signal["final_score"] is None
+        or coverage is None
+        or coverage < config.SCORE_MIN_COVERAGE
+    )
+    return signal
 
 
 def _trade_plan(snapshot: dict, entry: float | None, direction: str,

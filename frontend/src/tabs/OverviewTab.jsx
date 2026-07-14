@@ -100,9 +100,13 @@ export default function OverviewTab({ ticker, weights }) {
   if (error) return <Banner tone="error">API 오류: {error} — 백엔드(8000) 확인.</Banner>;
   if (!data) return <Banner>{loading ? "신호 불러오는 중…" : "종목을 선택하세요."}</Banner>;
 
-  // coverage < 1 = 일부 지표가 봉 부족으로 빠진 채 계산된 스코어.
   const coverage = signal.coverage;
-  const lowConfidence = coverage != null && coverage < 1;
+  // provisional = 신뢰도가 임계치 미만. 숫자를 아예 안 띄운다 — 흐리게 하는 게 아니다.
+  // 못 믿을 값을 믿을 만한 값과 같은 크기로 보여주는 것이 위험의 본질이라서다.
+  const provisional = signal.provisional;
+  // 임계치는 넘었지만 아직 전 지표가 데워지진 않은 구간 → 숫자 + 신뢰도 배지.
+  const lowConfidence = !provisional && coverage != null && coverage < 1;
+  const pct = (v) => Math.round(v * 100);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
@@ -116,15 +120,26 @@ export default function OverviewTab({ ticker, weights }) {
 
       {lowConfidence && (
         <Banner tone="warn">
-          신뢰도 낮음 — 봉 {signal.bars}개. 지표 가중치의 {Math.round(coverage * 100)}%만
-          반영됐습니다. 봉이 쌓이면 자동으로 보정됩니다.
+          신뢰도 {pct(coverage)}% — 봉 {signal.bars}개. 일부 지표가 아직 집계 중입니다
+          (전 지표 반영은 봉 60개). 봉이 쌓이면 자동으로 보정됩니다.
         </Banner>
       )}
 
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-4)", padding: "var(--space-8) var(--space-6)", boxShadow: "var(--shadow-sm)" }}>
-        {signal.final_score == null ? (
-          // 스코어 0/"중립"을 찍으면 안 된다 — 못 구한 것과 중립은 다른 말이다.
-          <Banner>지표 산출 불가 — 봉 {signal.bars}개. 잠시 후 다시 표시됩니다.</Banner>
+        {provisional ? (
+          // 게이지 숫자도 라벨도 없다. 신뢰할 수 없는 값에 결론의 크기를 주지 않는다.
+          <div style={{ textAlign: "center", padding: "var(--space-6) 0" }}>
+            <div style={{ fontSize: "var(--text-lg)", fontWeight: 700, color: "var(--text-secondary)" }}>
+              집계 중…
+            </div>
+            <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}>
+              봉 {signal.bars}/{signal.bars_for_signal}개 · 신뢰도 {pct(coverage ?? 0)}%
+              (신호 표시 기준 {pct(signal.min_coverage)}%)
+            </div>
+            <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
+              지표가 충분히 쌓이기 전의 방향은 신호로 보기 어렵습니다.
+            </div>
+          </div>
         ) : (
           <React.Fragment>
             {DirectionGauge && <DirectionGauge score={signal.final_score} size="lg" subtitle={`${header.as_of} 갱신`} />}
@@ -135,7 +150,13 @@ export default function OverviewTab({ ticker, weights }) {
 
       {signal.contributions.length > 0 && (
         <Card style={{ padding: "var(--space-5) var(--space-6)" }}>
-          <SectionLabel>근거 — 지표 기여도 (상위 {signal.contributions.length}개)</SectionLabel>
+          {/* 집계 중에도 켜진 지표는 보여 준다 — 진짜 관측이고, 장 초반에 트레이더가
+              실제로 보는 정보다. 다만 "근거"가 아니라 "참고"로 격을 낮춘다. */}
+          <SectionLabel>
+            {provisional
+              ? `참고 — 현재 켜진 지표 ${signal.contributions.length}개 (아직 신호 산출 전)`
+              : `근거 — 지표 기여도 (상위 ${signal.contributions.length}개)`}
+          </SectionLabel>
           {ContributionBar && (
             <ContributionBar items={signal.contributions.map((c) => ({ name: c.name, score: c.contribution, weight: c.weight }))} />
           )}
