@@ -8,10 +8,11 @@ import {
 
 const { CandleChart } = Ds;
 
+// 백엔드가 받는 interval 은 config.INTERVAL_PATTERN = ^(1m|5m)$ 뿐이다. 일봉을 남겨 두면
+// 누르는 순간 422 이고, 이제는 60초마다 폴링까지 되어 헤더에 "갱신 실패"가 계속 뜬다.
 const TIMEFRAMES = [
   { id: "1m", label: "1분" },
   { id: "5m", label: "5분" },
-  { id: "1d", label: "일봉" },
 ];
 
 const CHART_H = 360;
