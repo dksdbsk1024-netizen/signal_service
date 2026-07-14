@@ -5,7 +5,6 @@ provider를 모듈 싱글턴으로 두어 라우트가 데이터 소스에 직�
 
 from __future__ import annotations
 
-import datetime
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,6 +14,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ..core.indicators import IndicatorSet, compute_indicators
+from ..core.market_hours import market_status  # noqa: F401 — 라우트가 deps 에서 import 한다
 from ..core.providers import KISProvider, MacroDataProvider, MockProvider, StockProvider
 
 # backend/.env 로드 (KIS·FRED 키 등). 이미 환경에 있으면 유지.
@@ -85,26 +85,6 @@ def load_indicators(ticker: str) -> tuple[pd.DataFrame, dict, IndicatorSet]:
     ohlcv, flow = res["ohlcv"], res["flow"]
     ind = compute_indicators(ohlcv, flow)
     return ohlcv, flow, ind
-
-
-_KST = datetime.timezone(datetime.timedelta(hours=9))
-
-
-def market_status() -> str:
-    """StockHeader 배지용: open(정규장) | after(시간외) | closed.
-
-    KRX 휴장일은 모른다 — 휴장일이면 KIS 가 빈 응답을 주고 provider 가 Mock 으로
-    폴백하므로, 배지보다 header["mock"] 이 더 정확한 신선도 신호다.
-    """
-    now = datetime.datetime.now(_KST)
-    if now.weekday() >= 5:  # 토·일
-        return "closed"
-    hhmm = now.hour * 100 + now.minute
-    if 900 <= hhmm < 1530:
-        return "open"
-    if 1530 <= hhmm < 1800:
-        return "after"
-    return "closed"
 
 
 def stock_header(ticker: str) -> dict:
